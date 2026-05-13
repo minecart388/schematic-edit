@@ -17,9 +17,9 @@ GREY = "#D3D3D3"
 EMPTY = 0
 
 def resource_path(relative_path):
-    try:
-        base_path = sys._MEIPASS
-    except AttributeError:
+    if getattr(sys, 'frozen', False):
+        base_path = os.path.dirname(sys.executable)
+    else:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
@@ -61,7 +61,7 @@ class Editor:
 
         png_files = [f for f in os.listdir(self.texture_dir) if f.lower().endswith('.png')]
         if not png_files:
-            messagebox.showwarning("Предупреждение", f"В папке {self.texture_dir} нет файлов.")
+            messagebox.showwarning("Предупреждение", f"В папке нет PNG файлов.")
             return
 
         png_files.sort()
