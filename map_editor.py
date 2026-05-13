@@ -2,6 +2,7 @@ import json
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import os
+import sys
 
 CELL = 20
 W = 80
@@ -15,21 +16,23 @@ GREY = "#D3D3D3"
 
 EMPTY = 0
 
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
 class Editor:
     def __init__(self, root):
         self.root = root
         self.root.title("Редактор карты")
         self.root.geometry(f"{WIDTH+20}x{HEIGHT+100}")
 
-        self.texture_names = [
-            "birch_log.png", "birch_log_top.png", "birch_planks.png", "birch_sapling.png",
-            "birch_trapdoor.png", "birch.png", "farmland.png", "oak_log.png",
-            "oak_log_top.png", "oak_planks.png", "oak_sapling.png", "oak_trapdoor.png",
-            "spruce_log.png", "spruce_log_top.png", "spruce_planks.png", "spruce_sapling.png",
-            "spruce_trapdoor.png", "torch.png"
-        ]
-        self.texture_codes = {}
+        self.texture_dir = resource_path(os.path.join("assets", "block"))
         self.textures = {}
+        self.texture_codes = {}
+
         self.load_textures()
 
         self.grid = [[EMPTY for _ in range(W)] for _ in range(H)]
@@ -43,26 +46,35 @@ class Editor:
         self.draw()
 
     def load_textures(self):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
+        if not os.path.isdir(self.texture_dir):
+            messagebox.showerror(
+                "Ошибка",
+                f"Папка с текстурами не найдена:\n{self.texture_dir}\n\n"
+            )
+            return
+
         try:
             from PIL import Image, ImageTk
         except ImportError:
             messagebox.showerror("Ошибка", "Установите Pillow")
             return
 
+        png_files = [f for f in os.listdir(self.texture_dir) if f.lower().endswith('.png')]
+        if not png_files:
+            messagebox.showwarning("Предупреждение", f"В папке {self.texture_dir} нет файлов.")
+            return
+
+        png_files.sort()
         code = 1
-        for name in self.texture_names:
-            path = os.path.join(script_dir, name)
-            if os.path.exists(path):
-                try:
-                    img = Image.open(path).resize((CELL, CELL), Image.Resampling.LANCZOS)
-                    self.textures[code] = ImageTk.PhotoImage(img)
-                    self.texture_codes[name] = code
-                    code += 1
-                except Exception as e:
-                    print(f"Ошибка {name}: {e}")
-            else:
-                print(f"Файл {name} не найден")
+        for filename in png_files:
+            path = os.path.join(self.texture_dir, filename)
+            try:
+                img = Image.open(path).resize((CELL, CELL), Image.Resampling.LANCZOS)
+                self.textures[code] = ImageTk.PhotoImage(img)
+                self.texture_codes[filename] = code
+                code += 1
+            except Exception:
+                pass
 
     def setup_ui(self):
         self.canvas = tk.Canvas(self.root, width=WIDTH, height=HEIGHT, bg=WHITE)
@@ -80,7 +92,7 @@ class Editor:
                             command=lambda c=code: self.set_tool(c, fence=False))
             btn.pack(side=tk.LEFT, padx=2)
 
-        tk.Button(panel, text="Забор", bg=WHITE, relief=tk.SOLID, bd=1, width=6,
+        tk.Button(panel, text="Граница", bg=WHITE, relief=tk.SOLID, bd=1, width=7,
                   command=lambda: self.set_tool(None, fence=True)).pack(side=tk.LEFT, padx=10)
 
         action_frame = tk.Frame(self.root, bg=GREY, pady=5)
@@ -102,7 +114,7 @@ class Editor:
         self.fence_mode = fence
         if fence:
             self.tool = None
-            self.status.config(text="Инструмент: Забор")
+            self.status.config(text="Инструмент: Граница")
         else:
             self.tool = tool_code
             if tool_code == EMPTY:
@@ -125,6 +137,7 @@ class Editor:
                     self.canvas.create_rectangle(x1, y1, x2, y2, outline="gray", width=1)
                 else:
                     self.canvas.create_rectangle(x1, y1, x2, y2, fill="gray", outline="gray")
+
         for y in range(H+1):
             for x in range(W):
                 if self.fh[y][x]:
@@ -200,8 +213,8 @@ class Editor:
                     self.grid = new
                 self.draw()
                 messagebox.showinfo("Готово", "Карта загружена")
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось загрузить: {e}")
+            except Exception:
+                messagebox.showerror("Ошибка", "Не удалось загрузить JSON")
 
     def clear(self):
         self.grid = [[EMPTY]*W for _ in range(H)]
