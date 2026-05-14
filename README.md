@@ -1,1 +1,2 @@
-A program for creating and editing plans in Minecraft. It allows you to draw a block diagram, set boundaries, and save the result in PNG or JSON.
+A program for creating and editing plans. It allows you to draw a block diagram, set boundaries, and save the result in PNG (for publishing) or JSON (for further editing). 
+In some releases of the program, you can place any .png file in the [assets/block] folder, and it will be displayed as a tool.
