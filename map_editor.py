@@ -3,8 +3,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import os
 import sys
+import shutil
 
 CELL = 20
+BUTTON_ICON_SIZE = 16
 W = 80
 H = 40
 WIDTH = W * CELL
@@ -16,7 +18,14 @@ GREY = "#D3D3D3"
 
 EMPTY = 0
 
-def resource_path(relative_path):
+def internal_path(relative_path):
+    if getattr(sys, 'frozen', False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+def external_path(relative_path):
     if getattr(sys, 'frozen', False):
         base_path = os.path.dirname(sys.executable)
     else:
@@ -29,11 +38,15 @@ class Editor:
         self.root.title("Редактор карты")
         self.root.geometry(f"{WIDTH+20}x{HEIGHT+100}")
 
-        self.texture_dir = resource_path(os.path.join("assets", "block"))
+        self.texture_dir = external_path(os.path.join("assets", "block"))
+        self.gui_dir = internal_path(os.path.join("assets", "gui"))
         self.textures = {}
+        self.button_textures = {}
         self.texture_codes = {}
+        self.gui_button_textures = {}
 
         self.load_textures()
+        self.load_gui_textures()
 
         self.grid = [[EMPTY for _ in range(W)] for _ in range(H)]
         self.fh = [[False]*W for _ in range(H+1)]
@@ -42,15 +55,33 @@ class Editor:
         self.tool = EMPTY
         self.fence_mode = False
 
+        self.panel = None
         self.setup_ui()
         self.draw()
 
+    def load_gui_textures(self):
+        if not os.path.isdir(self.gui_dir):
+            self.gui_button_textures = {}
+            return
+        try:
+            from PIL import Image, ImageTk
+        except ImportError:
+            return
+        self.gui_button_textures = {}
+        for name in ["void.png", "fence.png"]:
+            path = os.path.join(self.gui_dir, name)
+            if os.path.exists(path):
+                try:
+                    img = Image.open(path).resize((BUTTON_ICON_SIZE, BUTTON_ICON_SIZE), Image.Resampling.LANCZOS)
+                    self.gui_button_textures[name] = ImageTk.PhotoImage(img)
+                except Exception:
+                    pass
+
     def load_textures(self):
         if not os.path.isdir(self.texture_dir):
-            messagebox.showerror(
-                "Ошибка",
-                f"Папка с текстурами не найдена:\n{self.texture_dir}\n\n"
-            )
+            self.textures = {}
+            self.button_textures = {}
+            self.texture_codes = {}
             return
 
         try:
@@ -61,39 +92,146 @@ class Editor:
 
         png_files = [f for f in os.listdir(self.texture_dir) if f.lower().endswith('.png')]
         if not png_files:
-            messagebox.showwarning("Предупреждение", f"В папке нет PNG файлов.")
+            self.textures = {}
+            self.button_textures = {}
+            self.texture_codes = {}
             return
 
         png_files.sort()
         code = 1
+        self.textures = {}
+        self.button_textures = {}
+        self.texture_codes = {}
         for filename in png_files:
             path = os.path.join(self.texture_dir, filename)
             try:
-                img = Image.open(path).resize((CELL, CELL), Image.Resampling.LANCZOS)
-                self.textures[code] = ImageTk.PhotoImage(img)
+                img_full = Image.open(path).resize((CELL, CELL), Image.Resampling.LANCZOS)
+                self.textures[code] = ImageTk.PhotoImage(img_full)
+                img_btn = Image.open(path).resize((BUTTON_ICON_SIZE, BUTTON_ICON_SIZE), Image.Resampling.LANCZOS)
+                self.button_textures[code] = ImageTk.PhotoImage(img_btn)
                 self.texture_codes[filename] = code
                 code += 1
             except Exception:
                 pass
+
+    def rebuild_toolbar(self):
+        if self.panel is not None:
+            self.panel.destroy()
+
+        self.panel = tk.Frame(self.root, bg=GREY, pady=5)
+        self.panel.pack(fill=tk.X, after=self.canvas)
+
+        if "void.png" in self.gui_button_textures:
+            btn_void = tk.Button(self.panel, image=self.gui_button_textures["void.png"],
+                                 relief=tk.SOLID, bd=1,
+                                 command=lambda: self.set_tool(EMPTY, fence=False))
+        else:
+            btn_void = tk.Button(self.panel, text="Пустой", bg=WHITE,
+                                 relief=tk.SOLID, bd=1, width=6,
+                                 command=lambda: self.set_tool(EMPTY, fence=False))
+        btn_void.pack(side=tk.LEFT, padx=2)
+
+        if "fence.png" in self.gui_button_textures:
+            btn_fence = tk.Button(self.panel, image=self.gui_button_textures["fence.png"],
+                                  relief=tk.SOLID, bd=1,
+                                  command=lambda: self.set_tool(None, fence=True))
+        else:
+            btn_fence = tk.Button(self.panel, text="Граница", bg=WHITE,
+                                  relief=tk.SOLID, bd=1, width=7,
+                                  command=lambda: self.set_tool(None, fence=True))
+        btn_fence.pack(side=tk.LEFT, padx=2)
+
+        for code, img in self.button_textures.items():
+            btn = tk.Button(self.panel, image=img, relief=tk.SOLID, bd=1,
+                            command=lambda c=code: self.set_tool(c, fence=False))
+            btn.pack(side=tk.LEFT, padx=2)
+
+    def import_textures(self):
+        files = filedialog.askopenfilenames(
+            title="Выберите PNG-файлы",
+            filetypes=[("PNG files", "*.png"), ("All files", "*.*")]
+        )
+        if not files:
+            return
+
+        os.makedirs(self.texture_dir, exist_ok=True)
+
+        for file_path in files:
+            if file_path.lower().endswith('.png'):
+                dest = os.path.join(self.texture_dir, os.path.basename(file_path))
+                shutil.copy(file_path, dest)
+
+        self.load_textures()
+        self.rebuild_toolbar()
+        self.draw()
+        messagebox.showinfo("Успех", f"Загружено {len(files)} текстур")
+
+    def delete_textures(self):
+        if not os.path.isdir(self.texture_dir):
+            messagebox.showinfo("Информация", "Нет загруженных текстур")
+            return
+
+        png_files = [f for f in os.listdir(self.texture_dir) if f.lower().endswith('.png')]
+        if not png_files:
+            messagebox.showinfo("Информация", "Нет загруженных текстур")
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("Управление текстурами")
+        win.geometry("300x400")
+        win.transient(self.root)
+        win.grab_set()
+
+        tk.Label(win, text="Выберите текстуры для удаления:").pack(pady=5)
+
+        listbox = tk.Listbox(win, selectmode=tk.MULTIPLE, height=15)
+        listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        for f in sorted(png_files):
+            listbox.insert(tk.END, f)
+
+        def delete_selected():
+            selected = listbox.curselection()
+            if not selected:
+                messagebox.showwarning("Предупреждение", "Ничего не выбрано")
+                return
+            for idx in selected:
+                filename = listbox.get(idx)
+                filepath = os.path.join(self.texture_dir, filename)
+                try:
+                    os.remove(filepath)
+                except Exception as e:
+                    messagebox.showerror("Ошибка", f"Не удалось удалить {filename}\n{e}")
+            win.destroy()
+            self.load_textures()
+            self.rebuild_toolbar()
+            self.draw()
+            messagebox.showinfo("Готово", "Выбранные текстуры удалены")
+
+        def delete_all():
+            if messagebox.askyesno("Подтверждение", "Удалить все текстуры?"):
+                for f in png_files:
+                    try:
+                        os.remove(os.path.join(self.texture_dir, f))
+                    except:
+                        pass
+                win.destroy()
+                self.load_textures()
+                self.rebuild_toolbar()
+                self.draw()
+                messagebox.showinfo("Готово", "Все текстуры удалены")
+
+        btn_frame = tk.Frame(win)
+        btn_frame.pack(pady=10)
+        tk.Button(btn_frame, text="Удалить выбранные", command=delete_selected).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Удалить всё", command=delete_all).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Отмена", command=win.destroy).pack(side=tk.LEFT, padx=5)
 
     def setup_ui(self):
         self.canvas = tk.Canvas(self.root, width=WIDTH, height=HEIGHT, bg=WHITE)
         self.canvas.pack(pady=5)
         self.canvas.bind("<Button-1>", self.click)
 
-        panel = tk.Frame(self.root, bg=GREY, pady=5)
-        panel.pack(fill=tk.X)
-
-        tk.Button(panel, text="Пустой", bg=WHITE, relief=tk.SOLID, bd=1, width=6,
-                  command=lambda: self.set_tool(EMPTY, fence=False)).pack(side=tk.LEFT, padx=2)
-
-        for code, img in self.textures.items():
-            btn = tk.Button(panel, image=img, relief=tk.SOLID, bd=1,
-                            command=lambda c=code: self.set_tool(c, fence=False))
-            btn.pack(side=tk.LEFT, padx=2)
-
-        tk.Button(panel, text="Граница", bg=WHITE, relief=tk.SOLID, bd=1, width=7,
-                  command=lambda: self.set_tool(None, fence=True)).pack(side=tk.LEFT, padx=10)
+        self.rebuild_toolbar()
 
         action_frame = tk.Frame(self.root, bg=GREY, pady=5)
         action_frame.pack(fill=tk.X)
@@ -106,6 +244,11 @@ class Editor:
                   command=self.load_json).pack(side=tk.LEFT, padx=2)
         tk.Button(action_frame, text="Очистить", bg=WHITE, width=7,
                   command=self.clear).pack(side=tk.LEFT, padx=10)
+
+        tk.Button(action_frame, text="Загрузить текстуры", bg=WHITE, width=15,
+                  command=self.import_textures).pack(side=tk.LEFT, padx=2)
+        tk.Button(action_frame, text="Удалить текстуры", bg=WHITE, width=15,
+                  command=self.delete_textures).pack(side=tk.LEFT, padx=2)
 
         self.status = tk.Label(self.root, text="Инструмент: Пустой", bd=1, relief=tk.SUNKEN, anchor=tk.W)
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
