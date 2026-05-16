@@ -28,7 +28,7 @@ desktop.ini
 *.bak
 *.backup
 
-# icon.ico      
+icon.ico      
 map_editor.exe
 
 *temp*.png
