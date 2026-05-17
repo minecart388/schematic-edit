@@ -1,0 +1,7 @@
+import tkinter as tk
+from editor import Editor
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = Editor(root)
+    root.mainloop()
