@@ -1,11 +1,10 @@
+# core.py
 import json
 import os
 import sys
 import copy
 from typing import List, Dict, Optional, Any
 from PIL import Image, ImageTk
-import tkinter as tk
-from tkinter import messagebox
 from config import CFG, EMPTY
 
 def path(rel: str, internal: bool = False) -> str:
@@ -14,23 +13,6 @@ def path(rel: str, internal: bool = False) -> str:
     else:
         base = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base, rel)
-
-class Msg:
-    @staticmethod
-    def info(msg: str) -> None:
-        messagebox.showinfo("", msg)
-    
-    @staticmethod
-    def error(msg: str) -> None:
-        messagebox.showerror("Ошибка", msg)
-    
-    @staticmethod
-    def warn(msg: str) -> None:
-        messagebox.showwarning("", msg)
-    
-    @staticmethod
-    def ask(msg: str) -> bool:
-        return messagebox.askyesno("", msg)
 
 class TexMgr:
     def __init__(self) -> None:
@@ -69,7 +51,7 @@ class TexMgr:
         if not os.path.isdir(folder):
             return
         icon_names = ["void.png", "fence.png", "find.png", "fill.png", "undo.png", "redo.png",
-                      "download.png", "upload.png", "clear.png", "add.png", "remove.png"]
+                    "download.png", "upload.png", "clear.png"]
         for name in icon_names:
             p = os.path.join(folder, name)
             if os.path.exists(p):
@@ -132,10 +114,52 @@ class Layer:
 
     def set_state(self, state: Dict[str, Any]) -> None:
         self.grid = state["grid"]
-        self.fh = state["fh"]
-        self.fv = state["fv"]
         self.h = len(self.grid)
         self.w = len(self.grid[0]) if self.h > 0 else 0
+        if "fh" in state and state["fh"]:
+            self.fh = state["fh"]
+        else:
+            self.fh = [[False] * self.w for _ in range(self.h + 1)]
+        if "fv" in state and state["fv"]:
+            self.fv = state["fv"]
+        else:
+            self.fv = [[False] * (self.w + 1) for _ in range(self.h)]
+        self._validate_fence_bounds()
+    
+    def _validate_fence_bounds(self) -> None:
+        expected_fh_rows = self.h + 1
+        expected_fh_cols = self.w
+        
+        if len(self.fh) != expected_fh_rows:
+            new_fh = [[False] * expected_fh_cols for _ in range(expected_fh_rows)]
+            for i in range(min(len(self.fh), expected_fh_rows)):
+                for j in range(min(len(self.fh[0]) if self.fh else 0, expected_fh_cols)):
+                    new_fh[i][j] = self.fh[i][j]
+            self.fh = new_fh
+        else:
+            for i in range(len(self.fh)):
+                if len(self.fh[i]) != expected_fh_cols:
+                    new_row = [False] * expected_fh_cols
+                    for j in range(min(len(self.fh[i]), expected_fh_cols)):
+                        new_row[j] = self.fh[i][j]
+                    self.fh[i] = new_row
+
+        expected_fv_rows = self.h
+        expected_fv_cols = self.w + 1
+        
+        if len(self.fv) != expected_fv_rows:
+            new_fv = [[False] * expected_fv_cols for _ in range(expected_fv_rows)]
+            for i in range(min(len(self.fv), expected_fv_rows)):
+                for j in range(min(len(self.fv[0]) if self.fv else 0, expected_fv_cols)):
+                    new_fv[i][j] = self.fv[i][j]
+            self.fv = new_fv
+        else:
+            for i in range(len(self.fv)):
+                if len(self.fv[i]) != expected_fv_cols:
+                    new_row = [False] * expected_fv_cols
+                    for j in range(min(len(self.fv[i]), expected_fv_cols)):
+                        new_row[j] = self.fv[i][j]
+                    self.fv[i] = new_row
 
     def clear(self) -> None:
         self.grid = [[EMPTY] * self.w for _ in range(self.h)]
@@ -245,10 +269,13 @@ class FileMgr:
             data = json.load(f)
         
         if "grid" in data:
-            self.map.w = CFG.map_width
-            self.map.h = CFG.map_height
-            single = Layer(self.map.w, self.map.h)
-            single.set_state({"grid": data["grid"], "fh": data.get("fh", []), "fv": data.get("fv", [])})
+            old_grid = data["grid"]
+            old_h = len(old_grid)
+            old_w = len(old_grid[0]) if old_h > 0 else 0
+            self.map.w = old_w
+            self.map.h = old_h
+            single = Layer(old_w, old_h)
+            single.set_state({"grid": old_grid, "fh": data.get("fh", []), "fv": data.get("fv", [])})
             self.map.layers = [single]
             self.map.visible = [True]
         else:
@@ -274,95 +301,3 @@ class FileMgr:
         if not os.path.isdir(self.preset_dir):
             return []
         return [os.path.splitext(f)[0] for f in os.listdir(self.preset_dir) if f.endswith('.json')]
-
-class Dialog:
-    @staticmethod
-    def select(parent: tk.Tk, title: str, items: List[str], on_ok: callable, on_delete: callable = None) -> None:
-        win = tk.Toplevel(parent)
-        win.title(title)
-        win.geometry("300x400")
-        win.transient(parent)
-        win.grab_set()
-        
-        tk.Label(win, text="Доступные элементы:").pack(pady=5)
-        
-        lb = tk.Listbox(win, height=15)
-        lb.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        for it in sorted(items):
-            lb.insert(tk.END, it)
-        
-        btn_frame = tk.Frame(win)
-        btn_frame.pack(pady=10)
-        
-        def ok():
-            sel = lb.curselection()
-            if sel:
-                on_ok(lb.get(sel[0]))
-            win.destroy()
-        
-        def delete():
-            sel = lb.curselection()
-            if sel and on_delete:
-                on_delete(lb.get(sel[0]))
-                win.destroy()
-        
-        tk.Button(btn_frame, text="Выбрать", command=ok, width=10).pack(side=tk.LEFT, padx=5)
-        
-        if on_delete:
-            tk.Button(btn_frame, text="Удалить", command=delete, width=10).pack(side=tk.LEFT, padx=5)
-        
-        tk.Button(btn_frame, text="Отмена", command=win.destroy, width=10).pack(side=tk.LEFT, padx=5)
-        
-        win.bind("<Double-Button-1>", lambda e: ok())
-        win.bind("<Return>", lambda e: ok())
-        win.bind("<Escape>", lambda e: win.destroy())
-
-    @staticmethod
-    def del_textures(parent: tk.Tk, folder: str, on_done: callable) -> None:
-        if not os.path.isdir(folder):
-            Msg.warn("Нет загруженных текстур")
-            return
-        files = [f for f in os.listdir(folder) if f.endswith('.png')]
-        if not files:
-            Msg.warn("Нет загруженных текстур")
-            return
-        win = tk.Toplevel(parent)
-        win.title("Управление текстурами")
-        win.geometry("300x400")
-        win.transient(parent)
-        win.grab_set()
-        tk.Label(win, text="Выберите текстуры для удаления:").pack(pady=5)
-        lb = tk.Listbox(win, selectmode=tk.MULTIPLE, height=15)
-        lb.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        for f in sorted(files):
-            lb.insert(tk.END, f)
-        
-        def delete_sel():
-            sel = lb.curselection()
-            if not sel:
-                Msg.warn("Ничего не выбрано")
-                return
-            for idx in sel:
-                p = os.path.join(folder, lb.get(idx))
-                try:
-                    os.remove(p)
-                except OSError:
-                    pass
-            win.destroy()
-            on_done()
-        
-        def delete_all():
-            if Msg.ask("Удалить все текстуры?"):
-                for f in files:
-                    try:
-                        os.remove(os.path.join(folder, f))
-                    except OSError:
-                        pass
-                win.destroy()
-                on_done()
-        
-        frm = tk.Frame(win)
-        frm.pack(pady=10)
-        tk.Button(frm, text="Удалить выбранные", command=delete_sel).pack(side=tk.LEFT, padx=5)
-        tk.Button(frm, text="Удалить всё", command=delete_all).pack(side=tk.LEFT, padx=5)
-        tk.Button(frm, text="Отмена", command=win.destroy).pack(side=tk.LEFT, padx=5)

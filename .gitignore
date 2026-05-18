@@ -30,5 +30,6 @@ desktop.ini
 
 icon.ico      
 map_editor.exe
+editor_settings.json
 
 *temp*.png
