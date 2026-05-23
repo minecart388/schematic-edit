@@ -1,4 +1,4 @@
-# Map Editor
+# Schematic-Edit
 
 Multi-layer map editor with support for custom textures, a preset system, a command console, and PNG export.
 
@@ -20,19 +20,17 @@ Multi-layer map editor with support for custom textures, a preset system, a comm
 
 ### Launching
 
-1. Launch the application `map_editor.exe` (or `python main.py` from the source code).
+1. Launch the application `Schematic-Edit` (or `main.py` from the source code).
 2. The editor window will open with an empty 100×50 map.
 
 ### Toolbar (at the top)
 
-- **Eraser** – removes the texture (leaves the cell empty)
+- **Eraser** – removes the texture
 - **Border** – draws/deletes borders between cells
-- **Pipette** – copies a texture from the map (also works with `Alt + LMB`)
+- **Pipette** – copies a texture from the map
 - **Fill** – fills an area with the selected texture
 - **Textures** – appear after loading, select a texture to draw
-- **Hotbar** – 9 slots for quick access to textures (drag-and-drop is supported).  
-  Keys **1-9** – select a texture from the corresponding slot.  
-  The **"Replace hotbar"** button allows you to configure slots through a graphical dialog.
+- **Hotbar** – 9 slots for quick access to textures
 
 ### Layer panel
 
@@ -42,13 +40,8 @@ Multi-layer map editor with support for custom textures, a preset system, a comm
 
 #### Layer buttons
 - **`+`** - add a new layer (maximum 383)
-- **`-`** - delete the current layer (the last layer cannot be deleted)
-View** – hide/show the current layer
-
-#### Layer management dialog
-- **Double click** – switch to the selected layer
-- **View** – hide/show the selected layer
-- **Delete selected layer** – delete with confirmation
+- **`-`** - delete the current layer
+- **`View`** – hide/show the current layer
 
 ### Action bar (bottom)
 
@@ -67,7 +60,7 @@ View** – hide/show the current layer
 
 #### Presets
 - **Load preset** – loading a ready-made map template
--Save preset** – save the current map as a template
+- **Save preset** – save the current map as a template
 
 #### Brush
 - **`-`** / **`+`** – reduce/increase the brush size (from 1 to 10)
@@ -76,14 +69,7 @@ View** – hide/show the current layer
 #### Grid
 - **Grid** – enable/disable the grid display
 
-### Control console
-
-The console is located on the right and allows you to execute text commands.  
-Enter a command and press `Enter`.  
-Use `Ctrl+Enter` for multiline input.  
-**Up/down arrows** – navigate the command history.
-
-#### Basic commands
+#### Basic console commands
 
 - `help` – show help
 - `circle x y radius fill` – draw a circle
