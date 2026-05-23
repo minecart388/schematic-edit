@@ -5,46 +5,50 @@ import sys
 import copy
 from typing import List, Dict, Optional, Any
 from PIL import Image, ImageTk
-from config import CFG, EMPTY
+from .config import CFG, EMPTY
 
 def path(rel: str, internal: bool = False) -> str:
     if getattr(sys, 'frozen', False):
         base = sys._MEIPASS if internal else os.path.dirname(sys.executable)
     else:
-        base = os.path.dirname(os.path.abspath(__file__))
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, rel)
 
 class TexMgr:
     def __init__(self) -> None:
-        self.blocks: Dict[int, ImageTk.PhotoImage] = {}
-        self.thumbs: Dict[int, ImageTk.PhotoImage] = {}
-        self.codes: Dict[str, int] = {}
+        self.blocks: Dict[str, ImageTk.PhotoImage] = {}
+        self.thumbs: Dict[str, ImageTk.PhotoImage] = {}
+        self.codes: Dict[str, str] = {}
         self.icons: Dict[str, ImageTk.PhotoImage] = {}
-        self.originals: Dict[int, Image.Image] = {}
+        self.originals: Dict[str, Image.Image] = {}
+        self.name_to_index: Dict[str, int] = {}
 
-    def load_blocks(self, folder: str) -> None:
+    def load_blocks(self, folder: str, log_func=None) -> None:
         self.blocks.clear()
         self.thumbs.clear()
         self.codes.clear()
         self.originals.clear()
+        self.name_to_index.clear()
         if not os.path.isdir(folder):
             return
         files = [f for f in os.listdir(folder) if f.lower().endswith('.png')]
         if not files:
             return
         files.sort()
-        code = 1
-        for name in files:
+        skipped = []
+        for idx, name in enumerate(files):
             p = os.path.join(folder, name)
             try:
                 img = Image.open(p)
-                self.originals[code] = img.copy()
-                self.blocks[code] = ImageTk.PhotoImage(img.resize((CFG.cell_size, CFG.cell_size), Image.Resampling.LANCZOS))
-                self.thumbs[code] = ImageTk.PhotoImage(img.resize((CFG.cell_size, CFG.cell_size), Image.Resampling.LANCZOS))
-                self.codes[name] = code
-                code += 1
+                self.originals[name] = img.copy()
+                self.blocks[name] = ImageTk.PhotoImage(img.resize((CFG.cell_size, CFG.cell_size), Image.Resampling.LANCZOS))
+                self.thumbs[name] = ImageTk.PhotoImage(img.resize((CFG.cell_size, CFG.cell_size), Image.Resampling.LANCZOS))
+                self.codes[name] = name
+                self.name_to_index[name] = idx + 1
             except (IOError, OSError, Image.UnidentifiedImageError):
-                pass
+                skipped.append(name)
+        if log_func and skipped:
+            log_func(f"Пропущены некорректные файлы: {', '.join(skipped)}", "warning")
 
     def load_icons(self, folder: str) -> None:
         self.icons.clear()
@@ -61,23 +65,29 @@ class TexMgr:
                 except (IOError, OSError, Image.UnidentifiedImageError):
                     pass
 
-    def get_block(self, code: int) -> Optional[ImageTk.PhotoImage]:
-        return self.blocks.get(code)
+    def get_block(self, name: str) -> Optional[ImageTk.PhotoImage]:
+        return self.blocks.get(name)
 
-    def get_thumb(self, code: int) -> Optional[ImageTk.PhotoImage]:
-        return self.thumbs.get(code)
+    def get_thumb(self, name: str) -> Optional[ImageTk.PhotoImage]:
+        return self.thumbs.get(name)
 
     def get_icon(self, name: str) -> Optional[ImageTk.PhotoImage]:
         return self.icons.get(name)
 
-    def get_original(self, code: int) -> Optional[Image.Image]:
-        return self.originals.get(code)
+    def get_original(self, name: str) -> Optional[Image.Image]:
+        return self.originals.get(name)
 
 class UndoMgr:
     def __init__(self, limit: int = CFG.undo_limit) -> None:
         self.undo: List[Any] = []
         self.redo: List[Any] = []
         self.limit = limit
+
+    def can_undo(self) -> bool:
+        return len(self.undo) > 0
+
+    def can_redo(self) -> bool:
+        return len(self.redo) > 0
 
     def save(self, state: Any) -> None:
         self.undo.append(copy.deepcopy(state))
@@ -101,7 +111,7 @@ class Layer:
     def __init__(self, w: int, h: int) -> None:
         self.w = w
         self.h = h
-        self.grid: List[List[int]] = [[EMPTY] * w for _ in range(h)]
+        self.grid: List[List[str]] = [[EMPTY] * w for _ in range(h)]
         self.fh: List[List[bool]] = [[False] * w for _ in range(h + 1)]
         self.fv: List[List[bool]] = [[False] * (w + 1) for _ in range(h)]
 
@@ -112,7 +122,7 @@ class Layer:
             "fv": copy.deepcopy(self.fv)
         }
 
-    def set_state(self, state: Dict[str, Any]) -> None:
+    def set_state(self, state: Dict[str, Any], tex_mgr: Optional['TexMgr'] = None) -> None:
         self.grid = state["grid"]
         self.h = len(self.grid)
         self.w = len(self.grid[0]) if self.h > 0 else 0
@@ -125,11 +135,25 @@ class Layer:
         else:
             self.fv = [[False] * (self.w + 1) for _ in range(self.h)]
         self._validate_fence_bounds()
-    
+
+        if tex_mgr and tex_mgr.name_to_index:
+            for y in range(self.h):
+                for x in range(self.w):
+                    val = self.grid[y][x]
+                    if isinstance(val, int) and val != 0:
+                        for name, idx in tex_mgr.name_to_index.items():
+                            if idx == val:
+                                self.grid[y][x] = name
+                                break
+                        else:
+                            self.grid[y][x] = EMPTY
+                    elif val == 0:
+                        self.grid[y][x] = EMPTY
+
     def _validate_fence_bounds(self) -> None:
         expected_fh_rows = self.h + 1
         expected_fh_cols = self.w
-        
+
         if len(self.fh) != expected_fh_rows:
             new_fh = [[False] * expected_fh_cols for _ in range(expected_fh_rows)]
             for i in range(min(len(self.fh), expected_fh_rows)):
@@ -146,7 +170,7 @@ class Layer:
 
         expected_fv_rows = self.h
         expected_fv_cols = self.w + 1
-        
+
         if len(self.fv) != expected_fv_rows:
             new_fv = [[False] * expected_fv_cols for _ in range(expected_fv_rows)]
             for i in range(min(len(self.fv), expected_fv_rows)):
@@ -169,7 +193,7 @@ class Layer:
     def resize(self, w: int, h: int) -> None:
         if self.h == h and self.w == w:
             return
-        
+
         new_grid = [[EMPTY] * w for _ in range(h)]
         for i in range(min(h, self.h)):
             for j in range(min(w, self.w)):
@@ -187,7 +211,7 @@ class Layer:
             for j in range(min(w + 1, len(self.fv[0]) if self.fv else 0)):
                 new_fv[i][j] = self.fv[i][j]
         self.fv = new_fv
-        
+
         self.w = w
         self.h = h
 
@@ -197,6 +221,10 @@ class Map:
         self.h = h
         self.layers: List[Layer] = [Layer(w, h)]
         self.visible: List[bool] = [True]
+        self.tex_mgr: Optional['TexMgr'] = None
+
+    def set_tex_mgr(self, tex_mgr: 'TexMgr') -> None:
+        self.tex_mgr = tex_mgr
 
     def get(self) -> Dict[str, Any]:
         return {
@@ -212,7 +240,7 @@ class Map:
         self.layers = []
         for layer_state in state["layers"]:
             layer = Layer(self.w, self.h)
-            layer.set_state(layer_state)
+            layer.set_state(layer_state, self.tex_mgr)
             self.layers.append(layer)
         if "visible" in state:
             self.visible = state["visible"][:len(self.layers)]
@@ -257,6 +285,7 @@ class FileMgr:
         self.map = map_obj
         self.tex = tex
         self.preset_dir = preset_dir
+        self.map.set_tex_mgr(tex)
 
     def save_json(self, path: str) -> bool:
         data = self.map.get()
@@ -267,7 +296,7 @@ class FileMgr:
     def load_json(self, path: str) -> bool:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        
+
         if "grid" in data:
             old_grid = data["grid"]
             old_h = len(old_grid)
@@ -275,7 +304,7 @@ class FileMgr:
             self.map.w = old_w
             self.map.h = old_h
             single = Layer(old_w, old_h)
-            single.set_state({"grid": old_grid, "fh": data.get("fh", []), "fv": data.get("fv", [])})
+            single.set_state({"grid": old_grid, "fh": data.get("fh", []), "fv": data.get("fv", [])}, self.tex)
             self.map.layers = [single]
             self.map.visible = [True]
         else:

@@ -1,6 +1,6 @@
 # main.py
 import tkinter as tk
-from editor import Editor
+from scripts.editor import Editor
 
 if __name__ == "__main__":
     root = tk.Tk()

@@ -4,171 +4,173 @@ Multi-layer map editor with support for custom textures, a preset system, a comm
 
 ## Features
 
-- **Multi-layer editing** - create and manage multiple layers (up to 383)
-- **Support for custom textures** - upload your PNG images
-- **Saving in JSON** - fully save all layers, borders, and settings
-- **Export to PNG** – save the map as an image with a scale of ×4
-- **Preset System** – save and load ready-made map templates
+- **Multi-layer editing** – create and manage layers (up to 383)
+- **Support for custom textures** – load PNG images
+- **Save to JSON** – fully save all layers, borders, and settings
+- **Export to PNG** – save the map as a image
+- **Preset System** – saving and loading ready-made map templates
 - **Undo / Redo** – up to 100 steps of history
-- **Border Editing** – create fences and borders between cells
-- **Fill and Eyedropper** – quickly copy and fill textures
-- **Control Console** – draw shapes, manage layers, and presets using text commands
-- **Grid** – easily navigate the map
-- **Light and dark themes** – one-click switching
+- **Boundary Editing** – creating fences and borders between cells
+- **Fill and Eyedropper** – quickly copying and filling textures
+- **Control Console** – drawing shapes, managing layers and presets through text commands
+- **Grid** – convenient navigation through the map
+- **Hotbar** – quick access to 9 texture slots
 
-## Instructions for use
+## Usage
 
 ### Launching
 
-1. Launch the application `map_editor.exe` (or `python main.py` from the source code)
-2. The editor window will open with an empty map of 100×50 cells
+1. Launch the application `map_editor.exe` (or `python main.py` from the source code).
+2. The editor window will open with an empty 100×50 map.
 
-### Toolbar (top)
+### Toolbar (at the top)
 
-- **Void** – removes the texture (puts a blank cell)
-- **Border** – draws/removes borders between cells
-- **Pipette** – copies the texture from the map (also works `Alt+LMB`)
-- **Fill** – fills the area with the selected texture
-- **Textures** – select the texture to draw (appear after loading)
+- **Eraser** – removes the texture (leaves the cell empty)
+- **Border** – draws/deletes borders between cells
+- **Pipette** – copies a texture from the map (also works with `Alt + LMB`)
+- **Fill** – fills an area with the selected texture
+- **Textures** – appear after loading, select a texture to draw
+- **Hotbar** – 9 slots for quick access to textures (drag-and-drop is supported).  
+  Keys **1-9** – select a texture from the corresponding slot.  
+  The **"Replace hotbar"** button allows you to configure slots through a graphical dialog.
 
 ### Layer panel
 
 #### Layer switching
-- **Up/Down arrows** or enter the layer number in the field
-- **Layer list** – opens the dialog for managing all layers
+- **Up/down arrows** or enter the layer number in the field.
+- **Layer list** opens a dialog for managing all layers.
 
 #### Layer buttons
-- **`+`** – add a new layer (maximum 383)
-- **`-`** – delete the current layer (you cannot delete the last one)
-- **View** – hide/show the current layer
+- **`+`** - add a new layer (maximum 383)
+- **`-`** - delete the current layer (the last layer cannot be deleted)
+View** – hide/show the current layer
 
 #### Layer management dialog
-- **Double-click** – switch to the selected layer
+- **Double click** – switch to the selected layer
 - **View** – hide/show the selected layer
 - **Delete selected layer** – delete with confirmation
 
 ### Action bar (bottom)
 
 #### Saving and loading
-- **`.png`** – export the map to an image (scale ×4, takes into account visible layers, borders, and grid)
+- **`.png`** – export the map to an image (scale ×4, takes into account visible layers, borders and grid)
 - **`.json`** – save the project to a file
-- **`.json`** – load the project from a file
+- **`.json`** – save the project to a filejson`** – loading a project from a file
 
 #### History
-- **↩️** – undo the last action
-- **↪️** – repeat the undone action
+- **↩️** – undoing the last action
+- **↪️** – repeating the undone action
 
 #### Textures
-- **Load textures** – add PNG files
-- **Delete textures** – delete loaded textures
+- **Load textures** – adding PNG files to the project
+- **Delete textures** – opens a dialog for selecting textures to delete (you can delete all or by number)
 
 #### Presets
-- **Load preset** – load a ready-made map template
-- **Save preset** – save the current map as a template
+- **Load preset** – loading a ready-made map template
+-Save preset** – save the current map as a template
 
 #### Brush
-- **`-`** / **`+`** – reduce/increase the brush size (1–10)
+- **`-`** / **`+`** – reduce/increase the brush size (from 1 to 10)
 - **Number** – current brush size
 
 #### Grid
-- **Grid** – enable/disable grid display
-
-#### Theme
-- **Theme** - switch between light and dark themes
+- **Grid** – enable/disable the grid display
 
 ### Control console
 
 The console is located on the right and allows you to execute text commands.  
-Enter a command and press `Enter`.
+Enter a command and press `Enter`.  
+Use `Ctrl+Enter` for multiline input.  
+**Up/down arrows** – navigate the command history.
 
 #### Basic commands
 
-- `help` - show help
-- `circle x y radius fill` - draw a circle
-- `square x y size fill` - draw a square
-- `rect x1 y1 x2 y2 fill` - draw a rectangle
-- `line x1 y1 x2 y2 thickness` - draw a line
-- `clear [all\|layer]` - clear all layers or the current one
-- `layers` - show layer information
-- `layer <number>` - switch to a layer
-- `tool` - show the current tool
-- `presets` - list of available presets
-- `save_preset` - save the current map as a preset
-- `load_preset` - load a preset
-- `delete_preset <name>` - delete a preset
-- `clear_console` - clear the console
+- `help` – show help
+- `circle x y radius fill` – draw a circle
+- `square x y size fill` – draw a square
+- `rect x1 y1 x2 y2 fill` – draw a rectangle
+- `line x1 y1 x2 y2 thickness` – draw a line
+- `clear [all|layer]` – clear all layers or the current layer
+- `layers` – show layer information
+- `layer <number>` – switch to a layer
+- `tool` – show the current tool
+- `presets` – list of available presets
+- `save_preset` – save the current map as a preset
+- `load_preset` – load a preset
+- `delete_preset <name>` – delete a preset (without the `.json` extension)
+- `clear_console` – clear the console
 
-**Parameters:**
+**Options:**
 - `fill`: `true` / `false` – fill the shape
-- Coordinates `x`, `y` – in map cells (from 0 to width/height)
+- Coordinates `x`, `y` – in the map cells (from 0 to width/height)
 - `thickness` – from 1 to 10
 
-### Map editing
+### Editing the map
 
-#### Drawing with texture
-1. Select a texture in the toolbar
-2. Click the left mouse button on a cell to draw
-3. Hold down the left mouse button and drag to draw a line
-4. The brush size can be changed in the action bar
+#### Drawing with a texture
+1. Select a texture in the toolbar or in the hotbar.
+2. Click with the left mouse button on the cell – the texture will be placed.
+3. Hold down the left button and drag the mouse to draw a line.
+4. You can change the brush size in the action bar.
 
 #### Drawing borders
-1. Click the **"Border"** button
-2. Click on the edge of the cell (between two cells) – the border will be created/deleted
-3. Borders are displayed as black lines
+1. Click on the **"Border"** button.
+2. Click on the edge between two cells to create or delete a border.
+3. Borders are displayed as black lines.
 
 #### Using the eyedropper
-- **Method 1:** Click the **"Eyedropper"** button, then click on the texture
-- **Method 2:** Hold down `Alt` and click with the left mouse button on the texture
+- **Method 1:** Click on the **"Eyedropper"** button, then click on the texture on the map.
+- **Method 2:** hold down `Alt` and click on the texture with the left mouse button.
 
 #### Fill area
-1. Select a texture (brush)
-2. Click the **"Fill"** button
-3. Click on the area to be filled
-4. All adjacent cells with the same texture will be filled
+1. Select the texture (brush).
+2. Click on the **"Fill"** button.
+3. Click on the area you want to fill.
+4. All adjacent cells with the same texture will be replaced.
 
 #### Clear
-- **Clear the current layer** – through the console: `clear layer`
-- **Clear all layers** – through the console: `clear all` or the "Clear" button with confirmation
+- **Clear the current layer** - through the console: `clear layer`
+- **Clear all layers** – via console: `clear all` or the "Clear" button with confirmation.
 
 ### Working with textures
 
 #### Loading textures
-1. Click on "Load textures"
-2. Select PNG files in the dialog box
-3. The textures will appear in the toolbar, automatically numbered from 1
+1. Click on **"Load textures"** .
+2. Select PNG files in the dialog box.
+3. The textures will appear in the toolbar, hotbar, and will be available for selection.
 
 #### Deleting textures
-1. Click on "Delete textures"
-2. A list of available textures will appear in the console
-3. Enter the numbers to delete (separated by spaces) or `all` to delete all
-4. The toolbar will update automatically
+1. Click on **"Delete textures"** .
+2. A dialog with a list of all loaded textures will open.
+3. Enter the numbers to delete (separated by spaces) or `all` to delete all.
+4. The toolbar and hotbar will update automatically.
 
 ### Working with presets
 
 #### Saving a preset
-1. Click **"Save preset"** or enter `save_preset` in the console
-2. Enter a name (letters, numbers, spaces, `_` and `-`)
-3. The preset will be saved in the `assets/presets/` folder
+1. Click on **"Save preset"** or enter `save_preset` in the console.
+2. Enter a name (letters, numbers, spaces, `_` and `-`).
+3. The preset will be saved in the `assets/presets/` folder.
 
 #### Loading a preset
-1. Click **"Load preset"** or enter `load_preset` in the console
-2. Select a preset from the list (you can enter the name in the console)
-3. The map will load (the current state is saved in the history)
+1. Click on **"Load preset"** or enter `load_preset` in the console.
+2. Select a preset from the list (you can enter the name in the console).
+3. The map will load (the current state will be saved in the history).
 
 #### Deleting a preset
-1. Enter `delete_preset <name>` in the console (without the `.json` extension)
-2. Confirm the deletion
+1. Enter `delete_preset <name>` (without the `.json` extension) in the console.
+2. Confirm the deletion.
 
 ### File formats
 
 #### JSON project
-- Saves all layers, borders, and settings
-- Use to save your work
-- Format: plain text (can be edited manually)
+- Preserves all layers, borders, and settings.
+- Use to save your work.
+- Format: plain text (can be edited manually).
 
 #### PNG export
-- Exports the map to an image
-- Scale ×4 for better quality
+- Exports the map to an image.
+- Scale ×4 for better quality.
 - Saves:  - All visible layers  - Borders (black lines)  - Grid (if enabled)
 
 ## System requirements
@@ -182,10 +184,10 @@ Enter a command and press `Enter`.
 ## License and distribution
 
 Allowed:
-- Use for personal and commercial purposes
-- Modify the source code
-- Distribute copies
+- Personal and commercial use
+- Modification of the source code
+- Distribution of copies
 
 Prohibited:
-- Pass off the program as your own
-- Remove information about the author
+- Passing off the program as your own
+- Removing the author's information
