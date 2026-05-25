@@ -2,18 +2,16 @@
 import tkinter as tk
 import json
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict
 from dataclasses import dataclass
 from PIL import Image, ImageTk
 from .config import CFG
 from .core import TexMgr
 
-
 @dataclass
 class HotbarSlot:
     texture_name: str = ""
     is_empty: bool = True
-
 
 class HotbarManager:
     def __init__(self, config_path: str = os.path.join("assets", "hotbar_config.json")):
@@ -85,7 +83,6 @@ class HotbarManager:
                 return i
         return None
 
-
 class HotbarWidget:
     def __init__(self, parent, tex_mgr: TexMgr, hotbar_mgr: HotbarManager,
                  on_select_callback):
@@ -98,6 +95,7 @@ class HotbarWidget:
         self.photos: List[Optional[ImageTk.PhotoImage]] = [None] * 9
         self.selected_index: Optional[int] = None
         self.slots_frame = None
+        self._cached_thumb_photos: Dict[str, ImageTk.PhotoImage] = {}
         self._build()
 
     def _build(self):
@@ -173,9 +171,13 @@ class HotbarWidget:
         tex_name = self.hotbar_mgr.get_slot(idx)
         btn = self.buttons[idx]
         if tex_name and tex_name in self.tex_mgr.originals:
-            orig = self.tex_mgr.originals[tex_name]
-            img = orig.resize((32, 32), Image.Resampling.NEAREST)
-            photo = ImageTk.PhotoImage(img)
+            if tex_name not in self._cached_thumb_photos:
+                orig = self.tex_mgr.originals[tex_name]
+                img = orig.resize((32, 32), Image.Resampling.NEAREST)
+                photo = ImageTk.PhotoImage(img)
+                self._cached_thumb_photos[tex_name] = photo
+            else:
+                photo = self._cached_thumb_photos[tex_name]
             self.photos[idx] = photo
             btn.config(image=photo, text="", bg=colors["BUTTON"],
                       activebackground=colors["BUTTON_ACTIVE"])
@@ -214,7 +216,6 @@ class HotbarWidget:
                 slot.config(bg="#4CAF50")
         self.refresh()
 
-
 class HotbarConfigWindow:
     def __init__(self, parent, tex_mgr: TexMgr, hotbar_mgr: HotbarManager,
                  hotbar_widget: HotbarWidget):
@@ -248,6 +249,22 @@ class HotbarConfigWindow:
                 slot_frame["frame"].configure(bg=colors["BG_PANEL"])
                 if "icon_label" in slot_frame:
                     slot_frame["icon_label"].configure(bg=colors["BG_PANEL"])
+
+    def _bind_scroll_to_widget(self, widget):
+        def _on_mousewheel(event):
+            self.textures_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        def _on_button4(event):
+            self.textures_canvas.yview_scroll(-1, "units")
+        def _on_button5(event):
+            self.textures_canvas.yview_scroll(1, "units")
+        widget.bind("<MouseWheel>", _on_mousewheel, add=True)
+        widget.bind("<Button-4>", _on_button4, add=True)
+        widget.bind("<Button-5>", _on_button5, add=True)
+
+    def _bind_all_children(self, widget):
+        self._bind_scroll_to_widget(widget)
+        for child in widget.winfo_children():
+            self._bind_all_children(child)
 
     def _build(self):
         colors = CFG.colors
@@ -312,19 +329,16 @@ class HotbarConfigWindow:
         canvas_frame = tk.Frame(texture_frame, bg=colors["BG_PANEL"])
         canvas_frame.pack(fill=tk.BOTH, expand=True)
 
-        canvas = tk.Canvas(canvas_frame, bg=colors["BG_CANVAS"], highlightthickness=0)
-        self.textures_container = tk.Frame(canvas, bg=colors["BG_CANVAS"])
+        self.textures_canvas = tk.Canvas(canvas_frame, bg=colors["BG_CANVAS"], highlightthickness=0)
+        self.textures_container = tk.Frame(self.textures_canvas, bg=colors["BG_CANVAS"])
         self.textures_container.bind("<Configure>", self._on_container_configure)
-        canvas.create_window((0,0), window=self.textures_container, anchor="nw")
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        canvas.bind("<MouseWheel>", _on_mousewheel)
-        canvas.bind("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
-        canvas.bind("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+        self.textures_canvas.create_window((0,0), window=self.textures_container, anchor="nw")
+        self.textures_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         self._populate_textures()
+
+        self._bind_scroll_to_widget(self.textures_canvas)
+        self._bind_all_children(self.textures_container)
 
         self.search_var.trace('w', lambda *_: self._filter_textures())
 
@@ -338,9 +352,13 @@ class HotbarConfigWindow:
             tex_name = self.hotbar_mgr.get_slot(i)
             icon_label = slot["icon_label"]
             if tex_name and tex_name in self.tex_mgr.originals:
-                orig = self.tex_mgr.originals[tex_name]
-                img = orig.resize((60, 60), Image.Resampling.NEAREST)
-                photo = ImageTk.PhotoImage(img)
+                if tex_name not in self.hotbar_widget._cached_thumb_photos:
+                    orig = self.tex_mgr.originals[tex_name]
+                    img = orig.resize((60, 60), Image.Resampling.NEAREST)
+                    photo = ImageTk.PhotoImage(img)
+                    self.hotbar_widget._cached_thumb_photos[tex_name] = photo
+                else:
+                    photo = self.hotbar_widget._cached_thumb_photos[tex_name]
                 icon_label.config(image=photo, text="", bg=colors["BG_PANEL"])
                 icon_label.image = photo
                 slot["photo"] = photo
@@ -362,8 +380,7 @@ class HotbarConfigWindow:
         self._update_slots_display()
 
     def _on_container_configure(self, event):
-        canvas = self.textures_container.master
-        canvas.configure(scrollregion=canvas.bbox("all"))
+        self.textures_canvas.configure(scrollregion=self.textures_canvas.bbox("all"))
 
     def _populate_textures(self):
         for widget in self.textures_container.winfo_children():
@@ -385,7 +402,7 @@ class HotbarConfigWindow:
             frame.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
             img = self.tex_mgr.get_thumb(tex_name)
             btn = tk.Button(frame, image=img,
-                           command=lambda n=tex_name: self._assign_to_first_empty_slot(n),
+                           command=lambda n=tex_name: self._assign_to_slot(n),
                            bg=CFG.colors["BUTTON"], relief=tk.RAISED)
             btn.pack()
             lbl = tk.Label(frame, text=tex_name if len(tex_name)<=15 else tex_name[:12]+"...",
@@ -401,6 +418,8 @@ class HotbarConfigWindow:
         for i in range(max_cols):
             self.textures_container.grid_columnconfigure(i, weight=1)
 
+        self._bind_all_children(self.textures_container)
+
     def _filter_textures(self):
         query = self.search_var.get().lower()
         for w in self.texture_widgets:
@@ -408,11 +427,13 @@ class HotbarConfigWindow:
                 w.grid()
             else:
                 w.grid_remove()
+        self.textures_canvas.configure(scrollregion=self.textures_canvas.bbox("all"))
+        self._bind_all_children(self.textures_container)
 
-    def _assign_to_first_empty_slot(self, tex_name: str):
+    def _assign_to_slot(self, tex_name: str):
         empty_slot = self.hotbar_mgr.find_empty_slot()
         if empty_slot is None:
-            empty_slot = 0
+            return
         self.hotbar_mgr.set_slot(empty_slot, tex_name)
         self.hotbar_widget.update_slot(empty_slot)
         self._update_slots_display()

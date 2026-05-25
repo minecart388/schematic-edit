@@ -2,7 +2,7 @@
 import tkinter as tk
 from typing import Optional
 from .config import CFG, EMPTY
-from .hotbar import HotbarWidget, HotbarConfigWindow, HotbarManager
+from .hotbar import HotbarWidget, HotbarConfigWindow
 
 
 class UIManager:
@@ -11,7 +11,7 @@ class UIManager:
         self.canvas: Optional[tk.Canvas] = None
         self.status: Optional[tk.Label] = None
         self.toolbar_frame: Optional[tk.Frame] = None
-        self.left_block: Optional[tk.Frame] = None          # сохранённая ссылка
+        self.left_block: Optional[tk.Frame] = None
         self.layer_frame: Optional[tk.Frame] = None
         self.layer_spinbox: Optional[tk.Spinbox] = None
         self.visible_var: Optional[tk.BooleanVar] = None
@@ -23,6 +23,8 @@ class UIManager:
         self.hotbar_widget: Optional[HotbarWidget] = None
         self.hotbar_settings_btn: Optional[tk.Button] = None
         self.theme_btn: Optional[tk.Button] = None
+        self.resize_btn: Optional[tk.Button] = None
+        self.center_btn: Optional[tk.Button] = None
 
     def setup(self, parent: tk.Frame) -> None:
         self._setup_canvas(parent)
@@ -56,7 +58,6 @@ class UIManager:
         self.left_block.pack(side=tk.LEFT, padx=5)
 
         self._add_tool_button(self.left_block, "void.png", "Ластик", lambda: self.editor.tool_manager.set_tool(EMPTY, False))
-        self._add_tool_button(self.left_block, "fence.png", "Граница", lambda: self.editor.tool_manager.set_tool(None, True))
         self._add_tool_button(self.left_block, "find.png", "Пипетка", lambda: self.editor.tool_manager.set_tool(-1, False))
         self._add_tool_button(self.left_block, "fill.png", "Заливка", lambda: self.editor.tool_manager.set_tool(-2, False))
 
@@ -106,17 +107,30 @@ class UIManager:
 
     def _setup_canvas(self, parent: tk.Frame) -> None:
         colors = CFG.colors
-        self.canvas = tk.Canvas(parent, width=CFG.width_px, height=CFG.height_px, 
-                                bg=colors["BG_CANVAS"], highlightthickness=0)
-        self.canvas.pack(pady=5)
+        self.canvas = tk.Canvas(parent, bg=colors["BG_CANVAS"], highlightthickness=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
 
         self.canvas.bind("<ButtonPress-1>", self.editor.drawing.on_press)
         self.canvas.bind("<B1-Motion>", self.editor.drawing.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.editor.drawing.on_release)
         self.canvas.bind("<Motion>", self.editor.on_mouse_move)
         self.canvas.bind("<Alt-Button-1>", self.editor.drawing.pick_texture)
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
+
+        self.canvas.bind("<MouseWheel>", self.editor.on_mousewheel)
+        self.canvas.bind("<Button-4>", self.editor.on_mousewheel)
+        self.canvas.bind("<Button-5>", self.editor.on_mousewheel)
 
         self.editor.theme.register_widget("canvas", self.canvas)
+
+    def _on_canvas_resize(self, event: tk.Event) -> None:
+        if event.widget == self.canvas:
+            w = self.canvas.winfo_width()
+            h = self.canvas.winfo_height()
+            if w > 0 and h > 0:
+                self.editor.camera.set_canvas_size(w, h)
+                self.editor.camera.clamp()
+                self.editor.drawing.draw()
 
     def _setup_layer_panel(self, parent: tk.Frame) -> None:
         colors = CFG.colors
@@ -184,6 +198,16 @@ class UIManager:
             self.editor.layer_manager.remove_layer()
             self.editor.console._print(f"✓ Слой удалён", "success")
 
+    def _open_layer_manager(self) -> None:
+        num_layers = self.editor.map.get_num_layers()
+        self.editor.console._print(f"Слои:", "info")
+        self.editor.console._print(f"  Всего слоёв: {num_layers}", "info")
+        self.editor.console._print(f"  Активный слой: {self.editor.layer_manager.current_layer + 1}", "info")
+        for i in range(num_layers):
+            visibility = "✓" if self.editor.map.visible[i] else "✗"
+            status = "вид" if self.editor.map.visible[i] else "скрыт"
+            self.editor.console._print(f"  Слой {i+1}: [{visibility}] {status}", "normal")
+
     def _setup_bottom_panel(self, parent: tk.Frame) -> None:
         colors = CFG.colors
 
@@ -222,6 +246,16 @@ class UIManager:
                                    bg=colors["BUTTON"], fg=colors["TEXT"],
                                    activebackground=colors["BUTTON_ACTIVE"])
         self.theme_btn.pack(side=tk.LEFT, padx=5)
+
+        self.resize_btn = tk.Button(self.bottom_frame, text="Размер карты", command=self.editor.resize_map,
+                                    bg=colors["BUTTON"], fg=colors["TEXT"],
+                                    activebackground=colors["BUTTON_ACTIVE"])
+        self.resize_btn.pack(side=tk.LEFT, padx=5)
+
+        self.center_btn = tk.Button(self.bottom_frame, text="Оцентровать", command=self.editor.center_map,
+                                    bg=colors["BUTTON"], fg=colors["TEXT"],
+                                    activebackground=colors["BUTTON_ACTIVE"])
+        self.center_btn.pack(side=tk.LEFT, padx=5)
 
         self.editor.theme.register_widget("bottom_frame", self.bottom_frame)
         self.editor.theme.register_widget("brush_size_label", self.brush_size_label)
@@ -299,9 +333,6 @@ class UIManager:
         except ValueError:
             self.update_layer_ui()
 
-    def _open_layer_manager(self) -> None:
-        self.editor.console._cmd_layers()
-
     def update_layer_ui(self) -> None:
         self.layer_spinbox.delete(0, tk.END)
         self.layer_spinbox.insert(0, str(self.editor.layer_manager.current_layer + 1))
@@ -316,14 +347,13 @@ class UIManager:
 
     def update_theme(self) -> None:
         colors = CFG.colors
-        
+
         self.toolbar_frame.config(bg=colors["BG_PANEL"])
         self.layer_frame.config(bg=colors["BG_PANEL"])
         self.bottom_frame.config(bg=colors["BG_PANEL"])
         self.canvas.config(bg=colors["BG_CANVAS"])
         self.status.config(bg=colors["L_GREY"], fg=colors["TEXT"])
-        
-        # Обновляем все прямые дочерние элементы toolbar_frame, layer_frame, bottom_frame
+
         for frame in [self.toolbar_frame, self.layer_frame, self.bottom_frame]:
             for child in frame.winfo_children():
                 if isinstance(child, tk.Button):
@@ -339,16 +369,14 @@ class UIManager:
                                  buttonbackground=colors["BUTTON"],
                                  selectbackground=colors["GREY"],
                                  selectforeground=colors["TEXT"])
-        
-        # Отдельно обновляем left_block и его кнопки (инструменты)
+
         if self.left_block:
             self.left_block.config(bg=colors["BG_PANEL"])
             for btn in self.left_block.winfo_children():
                 if isinstance(btn, tk.Button):
                     btn.config(bg=colors["BUTTON"], fg=colors["TEXT"],
                                activebackground=colors["BUTTON_ACTIVE"])
-        
-        # Обновляем специфические элементы
+
         if self.layer_spinbox:
             self.layer_spinbox.config(bg=colors["BUTTON"], fg=colors["TEXT"],
                                        buttonbackground=colors["BUTTON"],
@@ -365,3 +393,9 @@ class UIManager:
         if self.hotbar_settings_btn:
             self.hotbar_settings_btn.config(bg=colors["BUTTON"], fg=colors["TEXT"],
                                             activebackground=colors["BUTTON_ACTIVE"])
+        if self.resize_btn:
+            self.resize_btn.config(bg=colors["BUTTON"], fg=colors["TEXT"],
+                                   activebackground=colors["BUTTON_ACTIVE"])
+        if self.center_btn:
+            self.center_btn.config(bg=colors["BUTTON"], fg=colors["TEXT"],
+                                   activebackground=colors["BUTTON_ACTIVE"])

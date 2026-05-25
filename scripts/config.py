@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Any
 import json
 import os
+import tkinter as tk
+from tkinter import ttk
 
 @dataclass
 class Config:
@@ -62,6 +64,68 @@ class Config:
     def height_px(self) -> int:
         return self.map_height * self.cell_size
 
+class ProgressDialog:
+    def __init__(self, parent, title: str = "Прогресс", max_value: int = 100):
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title(title)
+        self.dialog.geometry("400x120")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        colors = CFG.colors
+        self.dialog.configure(bg=colors["BG_PANEL"])
+        
+        self.dialog.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._cancelled = False
+        self._callback = None
+        
+        main_frame = tk.Frame(self.dialog, bg=colors["BG_PANEL"])
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        self.label = tk.Label(main_frame, text="", bg=colors["BG_PANEL"], fg=colors["TEXT"])
+        self.label.pack(pady=5)
+        
+        self.progress = ttk.Progressbar(main_frame, length=350, mode='determinate', maximum=max_value)
+        self.progress.pack(pady=10)
+        
+        self.cancel_btn = tk.Button(main_frame, text="Отмена", command=self._cancel,
+                                   bg=colors["BUTTON"], fg=colors["TEXT"])
+        self.cancel_btn.pack(pady=5)
+        
+        self.center_window()
+        
+    def center_window(self):
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() // 2) - (self.dialog.winfo_width() // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (self.dialog.winfo_height() // 2)
+        self.dialog.geometry(f"+{x}+{y}")
+    
+    def _on_close(self):
+        self._cancelled = True
+        if self._callback:
+            self._callback(False)
+        self.dialog.destroy()
+    
+    def _cancel(self):
+        self._cancelled = True
+        if self._callback:
+            self._callback(False)
+        self.dialog.destroy()
+    
+    def update(self, value: int, message: str = ""):
+        self.progress['value'] = value
+        if message:
+            self.label.config(text=message)
+        self.dialog.update()
+    
+    def is_cancelled(self) -> bool:
+        return self._cancelled
+    
+    def set_callback(self, callback):
+        self._callback = callback
+    
+    def close(self):
+        self.dialog.destroy()
 
 class Settings:
     SETTINGS_FILE = os.path.join("assets", "editor_settings.json")
@@ -76,9 +140,10 @@ class Settings:
             "max_recent_files": 10,
             "show_grid": True,
             "brush_size": 1,
-            "auto_save": False,
-            "auto_save_interval": 300,
-            "theme": "dark"
+            "theme": "dark",
+            "zoom": 1.0,
+            "offset_x": 0,
+            "offset_y": 0
         }
         os.makedirs("assets", exist_ok=True)
         self.load()

@@ -22,6 +22,8 @@ class TexMgr:
         self.icons: Dict[str, ImageTk.PhotoImage] = {}
         self.originals: Dict[str, Image.Image] = {}
         self.name_to_index: Dict[str, int] = {}
+        self._current_zoom: float = 1.0
+        self._current_block_size: int = 0
 
     def load_blocks(self, folder: str, log_func=None) -> None:
         self.blocks.clear()
@@ -41,20 +43,18 @@ class TexMgr:
             try:
                 img = Image.open(p)
                 self.originals[name] = img.copy()
-                self.blocks[name] = ImageTk.PhotoImage(img.resize((CFG.cell_size, CFG.cell_size), Image.Resampling.LANCZOS))
-                self.thumbs[name] = ImageTk.PhotoImage(img.resize((CFG.cell_size, CFG.cell_size), Image.Resampling.LANCZOS))
-                self.codes[name] = name
                 self.name_to_index[name] = idx + 1
             except (IOError, OSError, Image.UnidentifiedImageError):
                 skipped.append(name)
         if log_func and skipped:
             log_func(f"Пропущены некорректные файлы: {', '.join(skipped)}", "warning")
+        self.update_block_size(self._current_zoom)
 
     def load_icons(self, folder: str) -> None:
         self.icons.clear()
         if not os.path.isdir(folder):
             return
-        icon_names = ["void.png", "fence.png", "find.png", "fill.png", "undo.png", "redo.png",
+        icon_names = ["void.png", "find.png", "fill.png", "undo.png", "redo.png",
                     "download.png", "upload.png", "clear.png"]
         for name in icon_names:
             p = os.path.join(folder, name)
@@ -64,6 +64,20 @@ class TexMgr:
                     self.icons[name] = ImageTk.PhotoImage(img)
                 except (IOError, OSError, Image.UnidentifiedImageError):
                     pass
+
+    def update_block_size(self, zoom: float) -> None:
+        new_size = max(1, int(CFG.cell_size * zoom))
+        if new_size == self._current_block_size:
+            return
+        self._current_block_size = new_size
+        self._current_zoom = zoom
+        self.blocks.clear()
+        for name, img in self.originals.items():
+            resized = img.resize((new_size, new_size), Image.Resampling.NEAREST)
+            self.blocks[name] = ImageTk.PhotoImage(resized)
+            thumb_size = CFG.cell_size
+            thumb = img.resize((thumb_size, thumb_size), Image.Resampling.NEAREST)
+            self.thumbs[name] = ImageTk.PhotoImage(thumb)
 
     def get_block(self, name: str) -> Optional[ImageTk.PhotoImage]:
         return self.blocks.get(name)
@@ -112,29 +126,16 @@ class Layer:
         self.w = w
         self.h = h
         self.grid: List[List[str]] = [[EMPTY] * w for _ in range(h)]
-        self.fh: List[List[bool]] = [[False] * w for _ in range(h + 1)]
-        self.fv: List[List[bool]] = [[False] * (w + 1) for _ in range(h)]
 
     def get_state(self) -> Dict[str, Any]:
         return {
-            "grid": copy.deepcopy(self.grid),
-            "fh": copy.deepcopy(self.fh),
-            "fv": copy.deepcopy(self.fv)
+            "grid": copy.deepcopy(self.grid)
         }
 
     def set_state(self, state: Dict[str, Any], tex_mgr: Optional['TexMgr'] = None) -> None:
         self.grid = state["grid"]
         self.h = len(self.grid)
         self.w = len(self.grid[0]) if self.h > 0 else 0
-        if "fh" in state and state["fh"]:
-            self.fh = state["fh"]
-        else:
-            self.fh = [[False] * self.w for _ in range(self.h + 1)]
-        if "fv" in state and state["fv"]:
-            self.fv = state["fv"]
-        else:
-            self.fv = [[False] * (self.w + 1) for _ in range(self.h)]
-        self._validate_fence_bounds()
 
         if tex_mgr and tex_mgr.name_to_index:
             for y in range(self.h):
@@ -150,67 +151,21 @@ class Layer:
                     elif val == 0:
                         self.grid[y][x] = EMPTY
 
-    def _validate_fence_bounds(self) -> None:
-        expected_fh_rows = self.h + 1
-        expected_fh_cols = self.w
-
-        if len(self.fh) != expected_fh_rows:
-            new_fh = [[False] * expected_fh_cols for _ in range(expected_fh_rows)]
-            for i in range(min(len(self.fh), expected_fh_rows)):
-                for j in range(min(len(self.fh[0]) if self.fh else 0, expected_fh_cols)):
-                    new_fh[i][j] = self.fh[i][j]
-            self.fh = new_fh
-        else:
-            for i in range(len(self.fh)):
-                if len(self.fh[i]) != expected_fh_cols:
-                    new_row = [False] * expected_fh_cols
-                    for j in range(min(len(self.fh[i]), expected_fh_cols)):
-                        new_row[j] = self.fh[i][j]
-                    self.fh[i] = new_row
-
-        expected_fv_rows = self.h
-        expected_fv_cols = self.w + 1
-
-        if len(self.fv) != expected_fv_rows:
-            new_fv = [[False] * expected_fv_cols for _ in range(expected_fv_rows)]
-            for i in range(min(len(self.fv), expected_fv_rows)):
-                for j in range(min(len(self.fv[0]) if self.fv else 0, expected_fv_cols)):
-                    new_fv[i][j] = self.fv[i][j]
-            self.fv = new_fv
-        else:
-            for i in range(len(self.fv)):
-                if len(self.fv[i]) != expected_fv_cols:
-                    new_row = [False] * expected_fv_cols
-                    for j in range(min(len(self.fv[i]), expected_fv_cols)):
-                        new_row[j] = self.fv[i][j]
-                    self.fv[i] = new_row
-
     def clear(self) -> None:
         self.grid = [[EMPTY] * self.w for _ in range(self.h)]
-        self.fh = [[False] * self.w for _ in range(self.h + 1)]
-        self.fv = [[False] * (self.w + 1) for _ in range(self.h)]
 
-    def resize(self, w: int, h: int) -> None:
-        if self.h == h and self.w == w:
+    def resize(self, w: int, h: int, shift_x: int = 0, shift_y: int = 0) -> None:
+        if self.h == h and self.w == w and shift_x == 0 and shift_y == 0:
             return
 
         new_grid = [[EMPTY] * w for _ in range(h)]
         for i in range(min(h, self.h)):
             for j in range(min(w, self.w)):
-                new_grid[i][j] = self.grid[i][j]
+                ni = i + shift_y
+                nj = j + shift_x
+                if 0 <= ni < h and 0 <= nj < w:
+                    new_grid[ni][nj] = self.grid[i][j]
         self.grid = new_grid
-
-        new_fh = [[False] * w for _ in range(h + 1)]
-        for i in range(min(h + 1, len(self.fh))):
-            for j in range(min(w, len(self.fh[0]) if self.fh else 0)):
-                new_fh[i][j] = self.fh[i][j]
-        self.fh = new_fh
-
-        new_fv = [[False] * (w + 1) for _ in range(h)]
-        for i in range(min(h, len(self.fv))):
-            for j in range(min(w + 1, len(self.fv[0]) if self.fv else 0)):
-                new_fv[i][j] = self.fv[i][j]
-        self.fv = new_fv
 
         self.w = w
         self.h = h
@@ -270,9 +225,11 @@ class Map:
         for layer in self.layers:
             layer.clear()
 
-    def resize(self) -> None:
+    def resize(self, new_w: int, new_h: int, shift_x: int = 0, shift_y: int = 0) -> None:
+        self.w = new_w
+        self.h = new_h
         for layer in self.layers:
-            layer.resize(self.w, self.h)
+            layer.resize(new_w, new_h, shift_x, shift_y)
 
     def get_active_layer(self, idx: int) -> Layer:
         return self.layers[idx]
@@ -304,12 +261,12 @@ class FileMgr:
             self.map.w = old_w
             self.map.h = old_h
             single = Layer(old_w, old_h)
-            single.set_state({"grid": old_grid, "fh": data.get("fh", []), "fv": data.get("fv", [])}, self.tex)
+            single.set_state({"grid": old_grid}, self.tex)
             self.map.layers = [single]
             self.map.visible = [True]
         else:
             self.map.set(data)
-        self.map.resize()
+        self.map.resize(self.map.w, self.map.h)
         return True
 
     def save_preset(self, name: str) -> Optional[str]:

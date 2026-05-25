@@ -5,32 +5,29 @@ import os
 import shutil
 from typing import Optional
 from PIL import Image, ImageDraw
-from .config import CFG, EMPTY, Settings
+from .config import CFG, EMPTY, Settings, ProgressDialog
 from .core import TexMgr, Map, UndoMgr, FileMgr, path
-from .editor_core import ThemeManager, LayerManager, DrawingEngine
+from .editor_core import ThemeManager, LayerManager, DrawingEngine, Camera
 from .editor_ui import UIManager
 from .console import ConsoleManager
 from .hotbar import HotbarManager
-
 
 class ToolManager:
     def __init__(self, editor):
         self.editor = editor
         self.tool: Optional[str] = EMPTY
-        self.fence: bool = False
         self.pipette_mode: bool = False
         self.flood_mode: bool = False
         self.fill_tool: str = EMPTY
         self.brush_size: int = 1
 
-    def set_tool(self, code, fence: bool, from_hotbar: bool = False) -> None:
+    def set_tool(self, code, from_hotbar: bool = False) -> None:
         if not from_hotbar:
             self.editor.ui.clear_hotbar_selection()
 
         if code == -1:
             self.pipette_mode = True
             self.flood_mode = False
-            self.fence = False
             self.tool = None
             self.editor.update_status()
             return
@@ -39,18 +36,13 @@ class ToolManager:
                 self.fill_tool = self.tool
                 self.flood_mode = True
                 self.pipette_mode = False
-                self.fence = False
                 self.editor.update_status()
             else:
                 self.editor.console._print("Сначала выберите текстуру для заливки", "error")
             return
         self.pipette_mode = False
         self.flood_mode = False
-        self.fence = fence
-        if fence:
-            self.tool = None
-        else:
-            self.tool = code
+        self.tool = code
         self.editor.update_status()
 
     def get_tool_name(self) -> str:
@@ -58,12 +50,9 @@ class ToolManager:
             return "Пипетка"
         if self.flood_mode:
             return "Заливка"
-        if self.fence:
-            return "Граница"
         if self.tool == EMPTY:
             return "Ластик"
         return self.tool if self.tool else "Текстура"
-
 
 class Editor:
     def __init__(self, root: tk.Tk) -> None:
@@ -112,6 +101,13 @@ class Editor:
         self.ui = UIManager(self)
         self.ui.setup(self.left_panel)
 
+        self.camera = Camera(0, 0, CFG.map_width, CFG.map_height, CFG.cell_size)
+        self.camera.zoom = self.settings.get("zoom", 1.0)
+        self.camera.offset_x = self.settings.get("offset_x", 0.0)
+        self.camera.offset_y = self.settings.get("offset_y", 0.0)
+
+        self.tex.update_block_size(self.camera.zoom)
+
         self.apply_theme()
 
         self.drawing.draw()
@@ -121,6 +117,10 @@ class Editor:
         self.root.bind("<Control-y>", lambda e: self.redo_op())
         self.root.bind("<Control-Z>", lambda e: self.undo_op())
         self.root.bind("<Control-Y>", lambda e: self.redo_op())
+        self.root.bind("<Control-plus>", lambda e: self.zoom_in())
+        self.root.bind("<Control-minus>", lambda e: self.zoom_out())
+        self.root.bind("<Button-3>", self.on_canvas_right_press)
+        self.root.bind("<B3-Motion>", self.on_canvas_right_drag)
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -143,28 +143,6 @@ class Editor:
         self.settings.set_theme(new_theme)
         self.apply_theme()
 
-    def _update_dynamic_widgets(self) -> None:
-        colors = CFG.colors
-        if self.ui.toolbar_frame:
-            for child in self.ui.toolbar_frame.winfo_children():
-                if isinstance(child, tk.Button):
-                    child.config(bg=colors["BUTTON"], fg=colors["TEXT"],
-                                 activebackground=colors["BUTTON_ACTIVE"])
-        if self.ui.bottom_frame:
-            for child in self.ui.bottom_frame.winfo_children():
-                if isinstance(child, tk.Button):
-                    child.config(bg=colors["BUTTON"], fg=colors["TEXT"],
-                                 activebackground=colors["BUTTON_ACTIVE"])
-                elif isinstance(child, tk.Label):
-                    child.config(bg=colors["BG_PANEL"], fg=colors["TEXT"])
-        if self.ui.layer_frame:
-            for child in self.ui.layer_frame.winfo_children():
-                if isinstance(child, tk.Button):
-                    child.config(bg=colors["BUTTON"], fg=colors["TEXT"],
-                                 activebackground=colors["BUTTON_ACTIVE"])
-                elif isinstance(child, tk.Label):
-                    child.config(bg=colors["BG_PANEL"], fg=colors["TEXT"])
-
     def dec_brush(self) -> None:
         if self.tool_manager.brush_size > CFG.brush_min:
             self.tool_manager.brush_size -= 1
@@ -182,6 +160,7 @@ class Editor:
     def toggle_grid(self) -> None:
         self.show_grid = self.ui.grid_var.get()
         self.settings.set("show_grid", self.show_grid)
+        self.drawing.update_grid()
         self.drawing.draw()
 
     def draw(self) -> None:
@@ -197,7 +176,7 @@ class Editor:
             if self.layer_manager.current_layer >= self.map.get_num_layers():
                 self.layer_manager.current_layer = self.map.get_num_layers() - 1
             self.layer_manager.set_active_layer(self.layer_manager.current_layer)
-            self.draw()
+            self.drawing.draw()
             self.console._print("Отмена", "success")
 
     def redo_op(self) -> None:
@@ -207,7 +186,7 @@ class Editor:
             if self.layer_manager.current_layer >= self.map.get_num_layers():
                 self.layer_manager.current_layer = self.map.get_num_layers() - 1
             self.layer_manager.set_active_layer(self.layer_manager.current_layer)
-            self.draw()
+            self.drawing.draw()
             self.console._print("Повтор", "success")
 
     def clear_layer(self, layer_idx: int, ask_confirm: bool = True) -> None:
@@ -220,7 +199,7 @@ class Editor:
         if confirmed:
             self.save_state()
             self.map.clear_layer(layer_idx)
-            self.draw()
+            self.drawing.draw()
             self.console._print(f"✓ Слой {layer_idx+1} очищен", "success")
 
     def clear_all_layers(self, ask_confirm: bool = True) -> None:
@@ -233,7 +212,7 @@ class Editor:
         if confirmed:
             self.save_state()
             self.map.clear_all()
-            self.draw()
+            self.drawing.draw()
             self.console._print("✓ Все слои очищены", "success")
 
     def save_png(self) -> None:
@@ -249,6 +228,9 @@ class Editor:
         self.settings.set("last_export_path", os.path.dirname(file_path))
         self.settings.add_recent_file(file_path)
 
+        total_cells = CFG.map_height * CFG.map_width * len(self.map.layers)
+        progress = ProgressDialog(self.root, "Сохранение PNG", total_cells)
+
         scale = 4
         w, h = CFG.map_width, CFG.map_height
         cell = CFG.cell_size
@@ -258,12 +240,18 @@ class Editor:
         bg_color = CFG.colors["BG_CANVAS"]
         img = Image.new("RGBA", (img_width, img_height), bg_color)
 
+        processed = 0
         for layer_idx, layer in enumerate(self.map.layers):
             if not self.map.visible[layer_idx]:
+                processed += w * h
                 continue
 
             for y in range(h):
                 for x in range(w):
+                    if progress.is_cancelled():
+                        progress.close()
+                        return
+
                     tex_name = layer.grid[y][x]
                     if tex_name != EMPTY:
                         orig = self.tex.get_original(tex_name)
@@ -274,22 +262,9 @@ class Editor:
                             else:
                                 img.paste(scaled_tile, (x * cell * scale, y * cell * scale))
 
-            draw = ImageDraw.Draw(img)
-            for y in range(h + 1):
-                for x in range(w):
-                    if layer.fh[y][x]:
-                        x1 = x * cell * scale
-                        y1 = y * cell * scale
-                        x2 = (x + 1) * cell * scale
-                        draw.line((x1, y1, x2, y1), fill=CFG.colors["BLACK"], width=2 * scale)
-
-            for y in range(h):
-                for x in range(w + 1):
-                    if layer.fv[y][x]:
-                        x1 = x * cell * scale
-                        y1 = y * cell * scale
-                        y2 = (y + 1) * cell * scale
-                        draw.line((x1, y1, x1, y2), fill=CFG.colors["BLACK"], width=2 * scale)
+                    processed += 1
+                    if processed % 500 == 0:
+                        progress.update(processed, f"Слой {layer_idx+1}: {processed}/{total_cells}")
 
         if self.show_grid:
             draw = ImageDraw.Draw(img)
@@ -306,6 +281,7 @@ class Editor:
             img = rgb_img
 
         img.save(file_path)
+        progress.close()
         self.console._print(f"Карта сохранена в {file_path}", "success")
 
     def save_json(self) -> None:
@@ -336,10 +312,102 @@ class Editor:
                     self.ui.update_layer_ui()
                     self.layer_manager.current_layer = 0
                     self.layer_manager.set_active_layer(0)
-                    self.draw()
+                    self.camera.set_map_size(CFG.map_width, CFG.map_height)
+                    self.camera.clamp()
+                    self.tex.update_block_size(self.camera.zoom)
+                    self.drawing.draw()
                     self.console._print("Карта загружена", "success")
             except Exception as e:
                 self.console._print(f"Ошибка загрузки: {e}", "error")
+
+    def resize_map(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Изменить размер карты")
+        dialog.geometry("270x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.configure(bg=CFG.colors["BG_PANEL"])
+
+        colors = CFG.colors
+        frame = tk.Frame(dialog, bg=colors["BG_PANEL"])
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        tk.Label(frame, text="Ширина:", bg=colors["BG_PANEL"], fg=colors["TEXT"]).grid(row=0, column=0, sticky="e", padx=5, pady=5)
+        width_entry = tk.Entry(frame, width=10, bg=colors["BUTTON"], fg=colors["TEXT"])
+        width_entry.insert(0, str(CFG.map_width))
+        width_entry.grid(row=0, column=1, padx=5, pady=5)
+
+        tk.Label(frame, text="Высота:", bg=colors["BG_PANEL"], fg=colors["TEXT"]).grid(row=1, column=0, sticky="e", padx=5, pady=5)
+        height_entry = tk.Entry(frame, width=10, bg=colors["BUTTON"], fg=colors["TEXT"])
+        height_entry.insert(0, str(CFG.map_height))
+        height_entry.grid(row=1, column=1, padx=5, pady=5)
+
+        shift_frame = tk.Frame(frame, bg=colors["BG_PANEL"])
+        shift_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        tk.Label(shift_frame, text="Сдвиг X:", bg=colors["BG_PANEL"], fg=colors["TEXT"]).pack(side=tk.LEFT, padx=5)
+        shift_x_entry = tk.Entry(shift_frame, width=5, bg=colors["BUTTON"], fg=colors["TEXT"])
+        shift_x_entry.insert(0, "0")
+        shift_x_entry.pack(side=tk.LEFT, padx=5)
+        tk.Label(shift_frame, text="Сдвиг Y:", bg=colors["BG_PANEL"], fg=colors["TEXT"]).pack(side=tk.LEFT, padx=5)
+        shift_y_entry = tk.Entry(shift_frame, width=5, bg=colors["BUTTON"], fg=colors["TEXT"])
+        shift_y_entry.insert(0, "0")
+        shift_y_entry.pack(side=tk.LEFT, padx=5)
+
+        crop_var = tk.BooleanVar(value=False)
+        crop_check = tk.Checkbutton(frame, text="Обрезать содержимое (иначе сдвинуть)", variable=crop_var,
+                                    bg=colors["BG_PANEL"], fg=colors["TEXT"], selectcolor=colors["BG_PANEL"])
+        crop_check.grid(row=3, column=0, columnspan=2, pady=5)
+
+        def apply():
+            try:
+                new_w = int(width_entry.get())
+                new_h = int(height_entry.get())
+                if new_w < 1 or new_h < 1:
+                    raise ValueError
+                shift_x = int(shift_x_entry.get())
+                shift_y = int(shift_y_entry.get())
+                if crop_var.get():
+                    shift_x = shift_y = 0
+                self.save_state()
+                self.map.resize(new_w, new_h, shift_x, shift_y)
+                CFG.map_width = new_w
+                CFG.map_height = new_h
+                self.camera.set_map_size(new_w, new_h)
+                self.camera.clamp()
+                self.tex.update_block_size(self.camera.zoom)
+                self.drawing.draw()
+                self.console._print(f"Размер карты изменён на {new_w}x{new_h}", "success")
+                dialog.destroy()
+            except ValueError:
+                self.console._print("Введите корректные числа", "error")
+
+        tk.Button(frame, text="Применить", command=apply, bg=colors["BUTTON"], fg=colors["TEXT"]).grid(row=4, column=0, columnspan=2, pady=10)
+
+    def center_map(self) -> None:
+        canvas_width = self.ui.canvas.winfo_width()
+        canvas_height = self.ui.canvas.winfo_height()
+        if canvas_width <= 0 or canvas_height <= 0:
+            canvas_width = self.camera.canvas_width
+            canvas_height = self.camera.canvas_height
+        map_width_px = CFG.map_width * CFG.cell_size
+        map_height_px = CFG.map_height * CFG.cell_size
+        if map_width_px <= 0 or map_height_px <= 0:
+            return
+        zoom_x = canvas_width / map_width_px
+        zoom_y = canvas_height / map_height_px
+        new_zoom = min(zoom_x, zoom_y)
+        new_zoom = max(self.camera.min_zoom, min(self.camera.max_zoom, new_zoom))
+        if new_zoom != self.camera.zoom:
+            self.camera.zoom = new_zoom
+            self.tex.update_block_size(self.camera.zoom)
+        self.camera.offset_x = (canvas_width / new_zoom - map_width_px) / 2
+        self.camera.offset_y = (canvas_height / new_zoom - map_height_px) / 2
+        self.camera.clamp()
+        self.settings.set("zoom", self.camera.zoom)
+        self.settings.set("offset_x", self.camera.offset_x)
+        self.settings.set("offset_y", self.camera.offset_y)
+        self.drawing.draw()
+        self.update_status()
 
     def import_tex(self) -> None:
         initial_dir = self.settings.get("last_import_path", "")
@@ -352,13 +420,21 @@ class Editor:
 
         self.settings.set("last_import_path", os.path.dirname(files[0]))
 
+        progress = ProgressDialog(self.root, "Импорт текстур", len(files))
+
         os.makedirs(self.block_dir, exist_ok=True)
-        for src in files:
+        for i, src in enumerate(files):
+            if progress.is_cancelled():
+                break
             dst = os.path.join(self.block_dir, os.path.basename(src))
             shutil.copy(src, dst)
+            progress.update(i + 1, f"Копирование {os.path.basename(src)}")
+
+        progress.close()
         self.tex.load_blocks(self.block_dir, log_func=self.console._print)
+        self.tex.update_block_size(self.camera.zoom)
         self.ui.refresh_hotbar()
-        self.draw()
+        self.drawing.draw()
         self.console._print(f"Загружено {len(files)} текстур", "success")
 
     def del_tex(self) -> None:
@@ -428,8 +504,9 @@ class Editor:
                 except OSError:
                     pass
             self.tex.load_blocks(self.block_dir, log_func=self.console._print)
+            self.tex.update_block_size(self.camera.zoom)
             self.ui.refresh_hotbar()
-            self.draw()
+            self.drawing.draw()
             self.console._print("Все текстуры удалены", "success")
             return
 
@@ -442,8 +519,9 @@ class Editor:
                     deleted.append(files[idx])
             if deleted:
                 self.tex.load_blocks(self.block_dir, log_func=self.console._print)
+                self.tex.update_block_size(self.camera.zoom)
                 self.ui.refresh_hotbar()
-                self.draw()
+                self.drawing.draw()
                 self.console._print(f"Удалено текстур: {len(deleted)}", "success")
             else:
                 self.console._print("Ничего не удалено", "warning")
@@ -472,15 +550,71 @@ class Editor:
 
     def update_status(self) -> None:
         tool_text = self.tool_manager.get_tool_name()
-        self.ui.update_status(f"{tool_text} | Слой {self.layer_manager.current_layer + 1} | Кисть {self.tool_manager.brush_size}")
+        self.ui.update_status(f"{tool_text} | Слой {self.layer_manager.current_layer + 1} | Кисть {self.tool_manager.brush_size} | Zoom {self.camera.zoom:.1f}x")
 
     def on_mouse_move(self, event: tk.Event) -> None:
-        xc = event.x // CFG.cell_size
-        yc = event.y // CFG.cell_size
+        wx, wy = self.camera.screen_to_world(event.x, event.y)
+        xc = int(wx)
+        yc = int(wy)
         if 0 <= xc < CFG.map_width and 0 <= yc < CFG.map_height:
-            self.ui.update_status(f"({xc}, {yc}) | {self.tool_manager.get_tool_name()} | Слой {self.layer_manager.current_layer + 1} | Кисть {self.tool_manager.brush_size}")
+            self.ui.update_status(f"({xc}, {yc}) | {self.tool_manager.get_tool_name()} | Слой {self.layer_manager.current_layer + 1} | Кисть {self.tool_manager.brush_size} | Zoom {self.camera.zoom:.1f}x")
+
+    def on_canvas_right_press(self, event: tk.Event) -> None:
+        self.camera.pan_start(event.x, event.y)
+
+    def on_canvas_right_drag(self, event: tk.Event) -> None:
+        self.camera.pan_move(event.x, event.y)
+        self.drawing.draw()
+
+    def on_mousewheel(self, event: tk.Event) -> None:
+        if hasattr(event, 'delta') and event.delta:
+            factor = 1.1 if event.delta > 0 else 0.9
+        elif hasattr(event, 'num') and event.num == 4:
+            factor = 1.1
+        elif hasattr(event, 'num') and event.num == 5:
+            factor = 0.9
+        else:
+            return
+        old_zoom = self.camera.zoom
+        self.camera.zoom_at(factor, event.x, event.y)
+        if self.camera.zoom != old_zoom:
+            self.tex.update_block_size(self.camera.zoom)
+        self.settings.set("zoom", self.camera.zoom)
+        self.settings.set("offset_x", self.camera.offset_x)
+        self.settings.set("offset_y", self.camera.offset_y)
+        self.drawing.draw()
+        self.update_status()
+
+    def zoom_in(self):
+        if self.console.console_has_focus():
+            return
+        old_zoom = self.camera.zoom
+        self.camera.zoom_at(1.1, self.camera.canvas_width//2, self.camera.canvas_height//2)
+        if self.camera.zoom != old_zoom:
+            self.tex.update_block_size(self.camera.zoom)
+        self.settings.set("zoom", self.camera.zoom)
+        self.settings.set("offset_x", self.camera.offset_x)
+        self.settings.set("offset_y", self.camera.offset_y)
+        self.drawing.draw()
+        self.update_status()
+
+    def zoom_out(self):
+        if self.console.console_has_focus():
+            return
+        old_zoom = self.camera.zoom
+        self.camera.zoom_at(0.9, self.camera.canvas_width//2, self.camera.canvas_height//2)
+        if self.camera.zoom != old_zoom:
+            self.tex.update_block_size(self.camera.zoom)
+        self.settings.set("zoom", self.camera.zoom)
+        self.settings.set("offset_x", self.camera.offset_x)
+        self.settings.set("offset_y", self.camera.offset_y)
+        self.drawing.draw()
+        self.update_status()
 
     def on_closing(self) -> None:
         self.settings.set("brush_size", self.tool_manager.brush_size)
         self.settings.set("show_grid", self.show_grid)
+        self.settings.set("zoom", self.camera.zoom)
+        self.settings.set("offset_x", self.camera.offset_x)
+        self.settings.set("offset_y", self.camera.offset_y)
         self.root.destroy()

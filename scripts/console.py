@@ -2,6 +2,7 @@
 import tkinter as tk
 from typing import Optional, List, Tuple
 from .config import CFG, EMPTY
+from .console_cmd import ConsoleCommands
 import os
 
 class ConsoleManager:
@@ -18,6 +19,15 @@ class ConsoleManager:
         self.input_callback = None
         self.waiting_for_preset = False
         self.preset_list = []
+        self.completion_index = 0
+        self.completion_prefix = ""
+        self.completion_matches: List[str] = []
+        self.completion_popup: Optional[tk.Toplevel] = None
+        self.completion_listbox: Optional[tk.Listbox] = None
+        self.scrollbar: Optional[tk.Scrollbar] = None
+
+        self.commands = ConsoleCommands(self)
+        self._console_has_focus = False
 
     def create(self, parent) -> None:
         colors = CFG.colors
@@ -40,6 +50,10 @@ class ConsoleManager:
 
         self.text.config(state=tk.DISABLED)
 
+        self.text.bind("<MouseWheel>", self.on_mousewheel)
+        self.text.bind("<Button-4>", self.on_mousewheel)
+        self.text.bind("<Button-5>", self.on_mousewheel)
+
         input_container = tk.Frame(self.frame, bg=colors["BG_CANVAS"])
         input_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
@@ -55,15 +69,18 @@ class ConsoleManager:
                                    insertbackground=colors["TEXT"])
         self.input_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
+        self.input_text.bind("<MouseWheel>", self.on_mousewheel)
+        self.input_text.bind("<Button-4>", self.on_mousewheel)
+        self.input_text.bind("<Button-5>", self.on_mousewheel)
         self.input_text.bind("<Control-Return>", self._execute_multiline)
         self.input_text.bind("<Control-v>", self._on_paste)
         self.input_text.bind("<Control-V>", self._on_paste)
-        self.input_text.bind("<MouseWheel>", self._on_mousewheel)
-        self.input_text.bind("<Button-4>", self._on_mousewheel)
-        self.input_text.bind("<Button-5>", self._on_mousewheel)
         self.input_text.bind("<KeyRelease>", self._update_line_numbers)
         self.input_text.bind("<Up>", self._history_up)
         self.input_text.bind("<Down>", self._history_down)
+        self.input_text.bind("<Tab>", self._auto_complete)
+        self.input_text.bind("<FocusIn>", self._on_console_focus)
+        self.input_text.bind("<FocusOut>", self._on_console_blur)
 
         self.input_text.focus_set()
 
@@ -71,6 +88,234 @@ class ConsoleManager:
 
         self._print("Консоль управления", "success")
         self._print("Команды: help, circle, square, rect, line, clear, layers, layer, tool", "info")
+
+    def on_mousewheel(self, event: tk.Event):
+        if event.widget == self.text:
+            if event.delta:
+                self.text.yview_scroll(int(-event.delta/120), "units")
+            elif event.num == 4:
+                self.text.yview_scroll(-1, "units")
+            elif event.num == 5:
+                self.text.yview_scroll(1, "units")
+        elif event.widget == self.input_text:
+            if event.delta:
+                self.input_text.yview_scroll(int(-event.delta/120), "units")
+            elif event.num == 4:
+                self.input_text.yview_scroll(-1, "units")
+            elif event.num == 5:
+                self.input_text.yview_scroll(1, "units")
+        return "break"
+
+    def _on_console_focus(self, event=None):
+        self._console_has_focus = True
+
+    def _on_console_blur(self, event=None):
+        self._console_has_focus = False
+
+    def console_has_focus(self) -> bool:
+        return self._console_has_focus
+
+    def _get_current_word(self) -> Tuple[str, str, int, int]:
+        cursor_pos = self.input_text.index(tk.INSERT)
+        line_start = f"{cursor_pos.split('.')[0]}.0"
+        line_text = self.input_text.get(line_start, cursor_pos)
+
+        words = line_text.split()
+        if not words:
+            return "", "", 0, 0
+
+        last_word = words[-1] if words else ""
+        word_start = line_text.rfind(last_word)
+
+        return last_word, line_text, word_start, len(last_word)
+
+    def _get_completions(self, prefix: str) -> List[str]:
+        if not prefix:
+            return list(self.commands.commands.keys())
+
+        prefix_lower = prefix.lower()
+        matches = [cmd for cmd in self.commands.commands.keys() if cmd.startswith(prefix_lower)]
+
+        if self.waiting_for_preset and self.preset_list:
+            matches.extend([p for p in self.preset_list if p.lower().startswith(prefix_lower)])
+
+        return sorted(matches)
+
+    def _hide_completion_popup(self):
+        if self.completion_popup and self.completion_popup.winfo_exists():
+            self.completion_popup.destroy()
+        self.completion_popup = None
+        self.completion_listbox = None
+        self.scrollbar = None
+
+    def _show_completion_popup(self, matches: List[str], prefix: str):
+        self._hide_completion_popup()
+
+        if not matches:
+            return
+
+        try:
+            cursor_bbox = self.input_text.bbox(tk.INSERT)
+            if not cursor_bbox:
+                return
+
+            x = self.input_text.winfo_rootx() + cursor_bbox[0]
+            y = self.input_text.winfo_rooty() + cursor_bbox[1] + cursor_bbox[3] + 2
+
+            self.completion_popup = tk.Toplevel(self.input_text)
+            self.completion_popup.wm_overrideredirect(True)
+            self.completion_popup.configure(bg=CFG.colors["SLOT_BORDER"])
+
+            main_frame = tk.Frame(self.completion_popup, bg=CFG.colors["SLOT_BORDER"], bd=1, relief=tk.SUNKEN)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+
+            listbox_frame = tk.Frame(main_frame, bg=CFG.colors["BUTTON"])
+            listbox_frame.pack(fill=tk.BOTH, expand=True)
+
+            self.completion_listbox = tk.Listbox(listbox_frame, 
+                                                  bg=CFG.colors["BUTTON"], 
+                                                  fg=CFG.colors["TEXT"],
+                                                  font=("Consolas", 9), 
+                                                  selectbackground="#4CAF50",
+                                                  selectforeground="white",
+                                                  relief=tk.FLAT,
+                                                  bd=0,
+                                                  activestyle="none",
+                                                  highlightthickness=0)
+            self.completion_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            for match in matches:
+                display_text = match
+                if match in self.commands.commands:
+                    display_text = f"{match:<15}"
+                self.completion_listbox.insert(tk.END, display_text)
+
+            if matches:
+                self.completion_listbox.select_set(0)
+
+            self.scrollbar = tk.Scrollbar(listbox_frame, orient=tk.VERTICAL, command=self.completion_listbox.yview)
+            self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self.completion_listbox.config(yscrollcommand=self.scrollbar.set)
+
+            max_visible = 12
+            visible_count = min(len(matches), max_visible)
+            item_height = 18
+            height = visible_count * item_height + 4
+
+            max_width = 0
+            for match in matches[:max_visible]:
+                display_len = len(match) if len(match) <= 15 else 15
+                width_px = display_len * 8 + 25
+                if width_px > max_width:
+                    max_width = width_px
+
+            max_width = max(max_width, 120)
+
+            self.completion_popup.geometry(f"{max_width}x{height}+{x}+{y}")
+
+            def on_select(event):
+                if self.completion_listbox and self.completion_listbox.curselection():
+                    selected = self.completion_listbox.get(self.completion_listbox.curselection()[0]).strip()
+                    self._replace_current_word(selected)
+                    self._hide_completion_popup()
+
+            def on_key(event):
+                if not self.completion_listbox:
+                    return
+
+                if event.keysym == 'Down':
+                    current = self.completion_listbox.curselection()
+                    if current:
+                        idx = current[0] + 1
+                        if idx < self.completion_listbox.size():
+                            self.completion_listbox.select_clear(0, tk.END)
+                            self.completion_listbox.select_set(idx)
+                            self.completion_listbox.see(idx)
+                    else:
+                        self.completion_listbox.select_set(0)
+                        self.completion_listbox.see(0)
+                elif event.keysym == 'Up':
+                    current = self.completion_listbox.curselection()
+                    if current:
+                        idx = current[0] - 1
+                        if idx >= 0:
+                            self.completion_listbox.select_clear(0, tk.END)
+                            self.completion_listbox.select_set(idx)
+                            self.completion_listbox.see(idx)
+                    else:
+                        last_idx = self.completion_listbox.size() - 1
+                        self.completion_listbox.select_set(last_idx)
+                        self.completion_listbox.see(last_idx)
+                elif event.keysym == 'Next':
+                    self.completion_listbox.yview_scroll(1, "pages")
+                elif event.keysym == 'Prior':
+                    self.completion_listbox.yview_scroll(-1, "pages")
+                elif event.keysym == 'Return':
+                    on_select(None)
+                    self._hide_completion_popup()
+                elif event.keysym == 'Escape':
+                    self._hide_completion_popup()
+                elif event.keysym == 'Tab':
+                    self._hide_completion_popup()
+                    self._auto_complete()
+
+            self.completion_listbox.bind('<Double-Button-1>', on_select)
+            self.completion_listbox.bind('<Return>', on_select)
+            self.completion_popup.bind('<Escape>', lambda e: self._hide_completion_popup())
+            self.completion_popup.bind('<FocusOut>', lambda e: self._hide_completion_popup())
+            self.completion_listbox.bind('<Key>', on_key)
+
+            def on_destroy(e):
+                self._hide_completion_popup()
+
+            self.input_text.bind('<Key>', on_destroy, add='+')
+            self.input_text.bind('<Button-1>', on_destroy, add='+')
+
+            self.completion_listbox.focus_set()
+
+        except Exception as e:
+            print(f"Error showing completion: {e}")
+
+    def _auto_complete(self, event=None):
+        if self.waiting_for_input:
+            return "break"
+
+        self._hide_completion_popup()
+
+        prefix, line_text, word_start, word_len = self._get_current_word()
+
+        matches = self._get_completions(prefix)
+
+        if not matches:
+            return "break"
+
+        if len(matches) == 1:
+            self._replace_current_word(matches[0])
+        else:
+            self._show_completion_popup(matches, prefix)
+
+        return "break"
+
+    def _replace_current_word(self, new_word: str):
+        cursor_pos = self.input_text.index(tk.INSERT)
+        line_num = int(cursor_pos.split('.')[0])
+
+        line_start = f"{line_num}.0"
+        line_text = self.input_text.get(line_start, cursor_pos)
+
+        words = line_text.split()
+        if words:
+            last_word = words[-1]
+            word_start_in_line = line_text.rfind(last_word)
+            word_end_in_line = word_start_in_line + len(last_word)
+
+            new_char_pos = word_start_in_line + len(new_word)
+
+            self.input_text.delete(f"{line_num}.{word_start_in_line}", f"{line_num}.{word_end_in_line}")
+            self.input_text.insert(f"{line_num}.{word_start_in_line}", new_word)
+            self.input_text.mark_set(tk.INSERT, f"{line_num}.{new_char_pos}")
+
+        self._update_line_numbers()
 
     def _history_up(self, event):
         if self.history and self.history_index > 0:
@@ -101,16 +346,6 @@ class ConsoleManager:
             pass
         return "break"
 
-    def _on_mousewheel(self, event):
-        if event.delta:
-            self.input_text.yview_scroll(int(-1*(event.delta/120)), "units")
-        elif event.num == 4:
-            self.input_text.yview_scroll(-1, "units")
-        elif event.num == 5:
-            self.input_text.yview_scroll(1, "units")
-        self._update_line_numbers()
-        return "break"
-
     def _update_line_numbers(self, event=None):
         if not self.line_numbers or not self.input_text:
             return
@@ -137,6 +372,11 @@ class ConsoleManager:
         if self.line_numbers:
             self.line_numbers.configure(bg=colors["BG_CANVAS"], fg=colors["GREY"])
 
+        if self.completion_popup and self.completion_popup.winfo_exists():
+            self.completion_popup.configure(bg=CFG.colors["SLOT_BORDER"])
+            if self.completion_listbox:
+                self.completion_listbox.configure(bg=CFG.colors["BUTTON"], fg=CFG.colors["TEXT"])
+
     def _execute_multiline(self, event=None) -> None:
         if not self.input_text:
             return
@@ -154,8 +394,6 @@ class ConsoleManager:
         for line in lines:
             self._execute_command_line(line)
 
-        self.input_text.delete("1.0", tk.END)
-        self._update_line_numbers()
         return "break"
 
     def _print(self, message: str, msg_type: str = "normal") -> None:
@@ -194,7 +432,14 @@ class ConsoleManager:
         self.history.append(command)
         self.history_index = len(self.history)
         self._print_command(command)
-        self._parse_and_execute(command)
+
+        parts = command.lower().split()
+        if not parts:
+            return
+
+        if not self.commands.execute(command, parts):
+            self._print(f"Ошибка: неизвестная команда '{parts[0]}'", "error")
+            self._print("Введите 'help' для списка команд", "info")
 
     def _handle_input(self, command: str) -> None:
         self.waiting_for_input = False
@@ -272,395 +517,3 @@ class ConsoleManager:
             self._print(f"  {p}.json", "info")
         self._print("Введите название пресета для загрузки", "info")
         self.waiting_for_preset = True
-
-    def _parse_and_execute(self, command: str) -> None:
-        parts = command.lower().split()
-        if not parts:
-            return
-
-        cmd = parts[0]
-
-        if cmd == "help" or cmd == "?":
-            self._show_help()
-        elif cmd == "circle":
-            self._cmd_circle(parts)
-        elif cmd == "square":
-            self._cmd_square(parts)
-        elif cmd == "rect":
-            self._cmd_rect(parts)
-        elif cmd == "line":
-            self._cmd_line(parts)
-        elif cmd == "clear":
-            self._cmd_clear(parts)
-        elif cmd == "layers":
-            self._cmd_layers()
-        elif cmd == "layer":
-            self._cmd_layer(parts)
-        elif cmd == "tool":
-            self._cmd_tool()
-        elif cmd == "clear_console":
-            self._clear_console()
-        elif cmd == "presets":
-            self._cmd_presets()
-        elif cmd == "save_preset":
-            self._cmd_save_preset()
-        elif cmd == "delete_preset":
-            self._cmd_delete_preset(parts)
-        elif cmd == "load_preset":
-            self._cmd_load_preset()
-        else:
-            self._print(f"Ошибка: неизвестная команда '{cmd}'", "error")
-            self._print("Введите 'help' для списка команд", "info")
-
-    def _clear_console(self) -> None:
-        self.text.config(state=tk.NORMAL)
-        self.text.delete(1.0, tk.END)
-        self.text.config(state=tk.DISABLED)
-        self._print("Консоль очищена", "success")
-
-    def _show_help(self) -> None:
-        help_text = """
-Доступные команды:
-------------------------------------------
-  circle x y radius fill [texture.png] - круг
-  square x y size fill [texture.png] - квадрат
-  rect x1 y1 x2 y2 fill [texture.png] - прямоугольник
-  line x1 y1 x2 y2 толщина [texture.png] - линия
-  layers - показать информацию о слоях
-  layer <номер> - переключиться на слой
-  layer <номер> show - показать детали слоя
-  layer <номер> del - удалить слой (с подтверждением)
-  tool - показать текущий инструмент
-  clear [all|layer] - очистить всё или текущий слой
-  presets - показать список пресетов
-  save_preset - сохранить текущую карту как пресет
-  load_preset - загрузить пресет
-  delete_preset <имя> - удалить пресет
-  clear_console - очистить консоль
-  help - показать справку
-
-Параметры:
-  fill: true/false - заливка фигуры
-  texture.png - имя файла текстуры
-------------------------------------------
-        """
-        self._print(help_text, "info")
-
-    def _get_current_texture_or_default(self, provided_name: Optional[str]) -> Optional[str]:
-        if provided_name and provided_name in self.editor.tex.blocks:
-            return provided_name
-        if isinstance(self.editor.tool_manager.tool, str) and self.editor.tool_manager.tool in self.editor.tex.blocks:
-            return self.editor.tool_manager.tool
-        self._print("Ошибка: не выбрана текстура или текстура не найдена", "error")
-        return None
-
-    def _cmd_circle(self, parts: list) -> None:
-        if len(parts) < 5 or len(parts) > 6:
-            self._print("Ошибка использования: circle x y radius fill [texture.png]", "error")
-            self._print("Пример: circle 50 25 10 true stone.png", "info")
-            return
-
-        try:
-            x = int(parts[1])
-            y = int(parts[2])
-            radius = int(parts[3])
-            fill = parts[4].lower() in ['true', '1', 'yes', 't']
-            tex_name = parts[5] if len(parts) == 6 else None
-            tool = self._get_current_texture_or_default(tex_name)
-            if tool is None:
-                return
-            if radius < 1:
-                self._print("Ошибка: радиус должен быть больше 0", "error")
-                return
-
-            self.editor.save_state()
-            self._draw_circle(x, y, radius, fill, tool)
-            self.editor.draw()
-            self._print(f"✓ Круг нарисован: центр({x},{y}) радиус={radius} заливка={'да' if fill else 'нет'} текстура={tool}", "success")
-        except ValueError:
-            self._print("Ошибка: неверный формат чисел", "error")
-
-    def _draw_circle(self, cx: int, cy: int, radius: int, fill: bool, tex_name: str) -> None:
-        layer = self.editor.layer_manager.get_active_layer_obj()
-
-        if fill:
-            for y in range(-radius, radius + 1):
-                for x in range(-radius, radius + 1):
-                    if x*x + y*y <= radius*radius:
-                        nx = cx + x
-                        ny = cy + y
-                        if 0 <= nx < CFG.map_width and 0 <= ny < CFG.map_height:
-                            layer.grid[ny][nx] = tex_name
-        else:
-            x = 0
-            y = radius
-            d = 1 - radius
-            points = []
-            while x <= y:
-                points.extend([
-                    (cx + x, cy + y), (cx - x, cy + y),
-                    (cx + x, cy - y), (cx - x, cy - y),
-                    (cx + y, cy + x), (cx - y, cy + x),
-                    (cx + y, cy - x), (cx - y, cy - x)
-                ])
-                if d < 0:
-                    d += 2 * x + 3
-                else:
-                    d += 2 * (x - y) + 5
-                    y -= 1
-                x += 1
-            for px, py in points:
-                if 0 <= px < CFG.map_width and 0 <= py < CFG.map_height:
-                    layer.grid[py][px] = tex_name
-
-    def _cmd_square(self, parts: list) -> None:
-        if len(parts) < 5 or len(parts) > 6:
-            self._print("Ошибка использования: square x y size fill [texture.png]", "error")
-            self._print("Пример: square 50 25 20 true stone.png", "info")
-            return
-
-        try:
-            x = int(parts[1])
-            y = int(parts[2])
-            size = int(parts[3])
-            fill = parts[4].lower() in ['true', '1', 'yes', 't']
-            tex_name = parts[5] if len(parts) == 6 else None
-            tool = self._get_current_texture_or_default(tex_name)
-            if tool is None:
-                return
-            if size < 1:
-                self._print("Ошибка: размер должен быть больше 0", "error")
-                return
-
-            half = size // 2
-            x1 = x - half
-            y1 = y - half
-            x2 = x + half
-            y2 = y + half
-
-            self.editor.save_state()
-            self._draw_rectangle(x1, y1, x2, y2, fill, tool)
-            self.editor.draw()
-            self._print(f"✓ Квадрат нарисован: центр({x},{y}) размер={size} заливка={'да' if fill else 'нет'} текстура={tool}", "success")
-        except ValueError:
-            self._print("Ошибка: неверный формат чисел", "error")
-
-    def _cmd_rect(self, parts: list) -> None:
-        if len(parts) < 6 or len(parts) > 7:
-            self._print("Ошибка использования: rect x1 y1 x2 y2 fill [texture.png]", "error")
-            self._print("Пример: rect 10 10 90 40 true stone.png", "info")
-            return
-
-        try:
-            x1 = int(parts[1])
-            y1 = int(parts[2])
-            x2 = int(parts[3])
-            y2 = int(parts[4])
-            fill = parts[5].lower() in ['true', '1', 'yes', 't']
-            tex_name = parts[6] if len(parts) == 7 else None
-            tool = self._get_current_texture_or_default(tex_name)
-            if tool is None:
-                return
-
-            self.editor.save_state()
-            self._draw_rectangle(x1, y1, x2, y2, fill, tool)
-            self.editor.draw()
-            self._print(f"✓ Прямоугольник нарисован: ({x1},{y1})-({x2},{y2}) заливка={'да' if fill else 'нет'} текстура={tool}", "success")
-        except ValueError:
-            self._print("Ошибка: неверный формат чисел", "error")
-
-    def _draw_rectangle(self, x1: int, y1: int, x2: int, y2: int, fill: bool, tex_name: str) -> None:
-        layer = self.editor.layer_manager.get_active_layer_obj()
-
-        left = max(0, min(x1, x2))
-        right = min(CFG.map_width - 1, max(x1, x2))
-        top = max(0, min(y1, y2))
-        bottom = min(CFG.map_height - 1, max(y1, y2))
-
-        if fill:
-            for y in range(top, bottom + 1):
-                for x in range(left, right + 1):
-                    layer.grid[y][x] = tex_name
-        else:
-            for x in range(left, right + 1):
-                if 0 <= top < CFG.map_height:
-                    layer.grid[top][x] = tex_name
-                if 0 <= bottom < CFG.map_height:
-                    layer.grid[bottom][x] = tex_name
-            for y in range(top + 1, bottom):
-                if 0 <= left < CFG.map_width:
-                    layer.grid[y][left] = tex_name
-                if 0 <= right < CFG.map_width:
-                    layer.grid[y][right] = tex_name
-
-    def _cmd_line(self, parts: list) -> None:
-        if len(parts) < 6 or len(parts) > 7:
-            self._print("Ошибка использования: line x1 y1 x2 y2 толщина [texture.png]", "error")
-            self._print("Пример: line 10 10 90 40 3 stone.png", "info")
-            return
-
-        try:
-            x1 = int(parts[1])
-            y1 = int(parts[2])
-            x2 = int(parts[3])
-            y2 = int(parts[4])
-            thickness = int(parts[5])
-            tex_name = parts[6] if len(parts) == 7 else None
-            tool = self._get_current_texture_or_default(tex_name)
-            if tool is None:
-                return
-            if thickness < CFG.brush_min or thickness > CFG.brush_max:
-                self._print(f"Ошибка: толщина должна быть от {CFG.brush_min} до {CFG.brush_max}", "error")
-                return
-
-            self.editor.save_state()
-            self._draw_line(x1, y1, x2, y2, thickness, tool)
-            self.editor.draw()
-            self._print(f"✓ Линия нарисована: ({x1},{y1})→({x2},{y2}) толщина={thickness} текстура={tool}", "success")
-        except ValueError:
-            self._print("Ошибка: неверный формат чисел", "error")
-
-    def _draw_line(self, x1: int, y1: int, x2: int, y2: int, thickness: int, tex_name: str) -> None:
-        layer = self.editor.layer_manager.get_active_layer_obj()
-        points = self._get_line_points(x1, y1, x2, y2)
-
-        for px, py in points:
-            for dy in range(-(thickness // 2), (thickness + 1) // 2):
-                for dx in range(-(thickness // 2), (thickness + 1) // 2):
-                    nx = px + dx
-                    ny = py + dy
-                    if 0 <= nx < CFG.map_width and 0 <= ny < CFG.map_height:
-                        layer.grid[ny][nx] = tex_name
-
-    def _get_line_points(self, x1: int, y1: int, x2: int, y2: int) -> List[Tuple[int, int]]:
-        points = []
-        dx = abs(x2 - x1)
-        dy = abs(y2 - y1)
-        sx = 1 if x1 < x2 else -1
-        sy = 1 if y1 < y2 else -1
-        err = dx - dy
-        x, y = x1, y1
-
-        while True:
-            points.append((x, y))
-            if x == x2 and y == y2:
-                break
-            e2 = 2 * err
-            if e2 > -dy:
-                err -= dy
-                x += sx
-            if e2 < dx:
-                err += dx
-                y += sy
-        return points
-
-    def _cmd_layers(self) -> None:
-        num_layers = self.editor.map.get_num_layers()
-        self._print(f"Слои:", "info")
-        self._print(f"  Всего слоёв: {num_layers}", "info")
-        self._print(f"  Активный слой: {self.editor.layer_manager.current_layer + 1}", "info")
-        for i in range(num_layers):
-            visibility = "✓" if self.editor.map.visible[i] else "✗"
-            status = "вид" if self.editor.map.visible[i] else "скрыт"
-            self._print(f"  Слой {i+1}: [{visibility}] {status}", "normal")
-
-    def _show_layer_details(self, idx: int) -> None:
-        layer = self.editor.map.layers[idx]
-        visible = self.editor.map.visible[idx]
-        filled = 0
-        for row in layer.grid:
-            for cell in row:
-                if cell != EMPTY:
-                    filled += 1
-        total = CFG.map_width * CFG.map_height
-        self._print(f"Слой {idx + 1}:", "info")
-        self._print(f"  Видимость: {'да' if visible else 'нет'}", "info")
-        self._print(f"  Заполнено: {filled} / {total} ({filled*100//total if total else 0}%)", "info")
-        self._print(f"  Размер сетки: {CFG.map_width} x {CFG.map_height}", "info")
-
-    def _confirm_delete_layer(self, idx: int) -> None:
-        if self.editor.map.get_num_layers() <= 1:
-            self._print("Ошибка: нельзя удалить единственный слой", "error")
-            return
-        self.ask_yes_no(f"Удалить слой {idx + 1}?", lambda confirmed: self._do_delete_layer(idx, confirmed))
-
-    def _do_delete_layer(self, idx: int, confirmed: bool) -> None:
-        if not confirmed:
-            self._print("Удаление слоя отменено", "info")
-            return
-        self.editor.save_state()
-        self.editor.map.remove_layer(idx)
-        if self.editor.layer_manager.current_layer >= self.editor.map.get_num_layers():
-            self.editor.layer_manager.current_layer = self.editor.map.get_num_layers() - 1
-        self.editor.layer_manager.set_active_layer(self.editor.layer_manager.current_layer)
-        self.editor.ui.update_layer_ui()
-        self.editor.draw()
-        self._print(f"✓ Слой {idx + 1} удалён", "success")
-
-    def _cmd_layer(self, parts: list) -> None:
-        if len(parts) < 2:
-            self._print("Ошибка использования: layer <номер> [show|del]", "error")
-            self._print("Примеры: layer 2, layer 2 show, layer 2 del", "info")
-            return
-
-        try:
-            idx = int(parts[1]) - 1
-            if idx < 0 or idx >= self.editor.map.get_num_layers():
-                self._print(f"Ошибка: слой {idx + 1} не существует", "error")
-                self._print(f"Всего слоёв: {self.editor.map.get_num_layers()}", "info")
-                return
-
-            if len(parts) == 2:
-                self.editor.layer_manager.set_active_layer(idx)
-                self._print(f"✓ Переключились на слой {idx + 1}", "success")
-            elif len(parts) == 3:
-                subcmd = parts[2].lower()
-                if subcmd == "show":
-                    self._show_layer_details(idx)
-                elif subcmd == "del":
-                    self._confirm_delete_layer(idx)
-                else:
-                    self._print(f"Ошибка: неизвестная подкоманда '{subcmd}'", "error")
-            else:
-                self._print("Ошибка: слишком много аргументов", "error")
-        except ValueError:
-            self._print("Ошибка: неверный номер слоя", "error")
-
-    def _cmd_tool(self) -> None:
-        tool_name = self.editor.tool_manager.get_tool_name()
-        self._print(f"Текущий инструмент: {tool_name}", "info")
-        if self.editor.tool_manager.tool == EMPTY or self.editor.tool_manager.tool is None:
-            self._print("Для рисования выберите текстуру на панели инструментов", "warning")
-
-    def _cmd_clear(self, parts: list) -> None:
-        if len(parts) > 1 and parts[1] == "layer":
-            self.editor.clear_layer(self.editor.layer_manager.current_layer, ask_confirm=True)
-        else:
-            self.editor.clear_all_layers(ask_confirm=True)
-
-    def _cmd_presets(self) -> None:
-        presets = self.editor.file.list_presets()
-        if not presets:
-            self._print("Нет доступных пресетов", "info")
-            return
-        self._print("Доступные пресеты:", "info")
-        for p in sorted(presets):
-            self._print(f"  {p}.json", "info")
-
-    def _cmd_save_preset(self) -> None:
-        self.ask_input("Введите название пресета:", self.editor.save_preset_with_name)
-
-    def _cmd_delete_preset(self, parts: list) -> None:
-        if len(parts) != 2:
-            self._print("Ошибка использования: delete_preset <имя>", "error")
-            self._print("Пример: delete_preset kakoi_to", "info")
-            return
-        preset_name = parts[1]
-        self._confirm_delete_preset(preset_name)
-
-    def _cmd_load_preset(self) -> None:
-        presets = self.editor.file.list_presets()
-        if not presets:
-            self._print("Нет доступных пресетов", "error")
-            return
-        self.show_preset_selection(presets)

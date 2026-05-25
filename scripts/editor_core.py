@@ -79,7 +79,7 @@ class LayerManager:
             self.editor.map.add_layer()
             self.current_layer = self.editor.map.get_num_layers() - 1
             self.editor.ui.update_layer_ui()
-            self.editor.draw()
+            self.editor.drawing.draw()
             self.editor.update_status()
         else:
             self.editor.console._print(f"Ошибка: максимальное количество слоёв {CFG.max_layers}", "error")
@@ -94,13 +94,13 @@ class LayerManager:
         if self.current_layer >= self.editor.map.get_num_layers():
             self.current_layer = self.editor.map.get_num_layers() - 1
         self.editor.ui.update_layer_ui()
-        self.editor.draw()
+        self.editor.drawing.draw()
 
     def toggle_visibility(self) -> None:
         self.editor.save_state()
         self.editor.map.visible[self.current_layer] = not self.editor.map.visible[self.current_layer]
         self.editor.ui.update_visibility_check()
-        self.editor.draw()
+        self.editor.drawing.draw()
         self.editor.update_status()
 
     def clear_current(self) -> None:
@@ -117,21 +117,115 @@ class LayerManager:
     def get_active_layer_obj(self):
         return self.editor.map.get_active_layer(self.current_layer)
 
+class Camera:
+    def __init__(self, canvas_width: int, canvas_height: int, map_width: int, map_height: int, cell_size: int):
+        self.canvas_width = canvas_width
+        self.canvas_height = canvas_height
+        self.map_width = map_width
+        self.map_height = map_height
+        self.cell_size = cell_size
+        self.zoom: float = 1.0
+        self.offset_x: float = 0.0
+        self.offset_y: float = 0.0
+        self.min_zoom = 0.25
+        self.max_zoom = 4.0
+        self._drag_start = None
+
+    def set_map_size(self, w: int, h: int):
+        self.map_width = w
+        self.map_height = h
+
+    def set_canvas_size(self, w: int, h: int):
+        self.canvas_width = w
+        self.canvas_height = h
+
+    def world_to_screen(self, x: int, y: int) -> Tuple[float, float]:
+        sx = (x * self.cell_size + self.offset_x) * self.zoom
+        sy = (y * self.cell_size + self.offset_y) * self.zoom
+        return sx, sy
+
+    def screen_to_world(self, sx: float, sy: float) -> Tuple[float, float]:
+        wx = (sx / self.zoom) - self.offset_x
+        wy = (sy / self.zoom) - self.offset_y
+        return wx / self.cell_size, wy / self.cell_size
+
+    def clamp(self):
+        total_w = self.map_width * self.cell_size
+        total_h = self.map_height * self.cell_size
+        view_w = self.canvas_width / self.zoom
+        view_h = self.canvas_height / self.zoom
+        min_x = -total_w + view_w
+        min_y = -total_h + view_h
+        if total_w > view_w:
+            self.offset_x = max(min_x, min(0.0, self.offset_x))
+        else:
+            self.offset_x = (self.canvas_width / self.zoom - total_w) / 2
+        if total_h > view_h:
+            self.offset_y = max(min_y, min(0.0, self.offset_y))
+        else:
+            self.offset_y = (self.canvas_height / self.zoom - total_h) / 2
+
+    def pan_start(self, x: int, y: int):
+        self._drag_start = (x, y)
+
+    def pan_move(self, x: int, y: int):
+        if self._drag_start:
+            dx = x - self._drag_start[0]
+            dy = y - self._drag_start[1]
+            self.offset_x += dx / self.zoom
+            self.offset_y += dy / self.zoom
+            self.clamp()
+            self._drag_start = (x, y)
+
+    def zoom_at(self, factor: float, cx: int, cy: int):
+        old_zoom = self.zoom
+        new_zoom = max(self.min_zoom, min(self.max_zoom, self.zoom * factor))
+        if new_zoom == old_zoom:
+            return
+        wx, wy = self.screen_to_world(cx, cy)
+        self.zoom = new_zoom
+        nx, ny = self.world_to_screen(wx, wy)
+        self.offset_x += (cx - nx) / self.zoom
+        self.offset_y += (cy - ny) / self.zoom
+        self.clamp()
+
 class DrawingEngine:
     def __init__(self, editor):
         self.editor = editor
         self._drag: bool = False
         self._last: Optional[Tuple[int, int]] = None
+        self._pending_redraw = False
+        self._redraw_timer = None
+        self._cached_items: Dict[Tuple[int, int, int], int] = {}
+        self._cached_grid_items: List[int] = []
 
-    def draw(self) -> None:
+    def draw(self, full_redraw: bool = True) -> None:
         canvas = self.editor.ui.canvas
         if not canvas:
             return
 
+        if full_redraw:
+            self._full_redraw()
+        else:
+            self._schedule_redraw()
+
+    def _schedule_redraw(self):
+        if self._redraw_timer is not None:
+            self.editor.root.after_cancel(self._redraw_timer)
+        self._redraw_timer = self.editor.root.after(50, self._full_redraw)
+
+    def _full_redraw(self):
+        canvas = self.editor.ui.canvas
+        if not canvas:
+            return
         canvas.delete("all")
+        self._cached_items.clear()
+        self._cached_grid_items.clear()
+
         cell = CFG.cell_size
         w, h = CFG.map_width, CFG.map_height
         colors = CFG.colors
+        cam = self.editor.camera
 
         for layer_idx, layer in enumerate(self.editor.map.layers):
             if not self.editor.map.visible[layer_idx]:
@@ -142,28 +236,66 @@ class DrawingEngine:
                     if tex_name != EMPTY:
                         img = self.editor.tex.get_block(tex_name)
                         if img:
-                            canvas.create_image(x*cell, y*cell, anchor=tk.NW, image=img)
-            for y in range(h+1):
-                for x in range(w):
-                    if layer.fh[y][x]:
-                        canvas.create_line(x*cell, y*cell, (x+1)*cell, y*cell, fill=colors["BLACK"], width=2)
-            for y in range(h):
-                for x in range(w+1):
-                    if layer.fv[y][x]:
-                        canvas.create_line(x*cell, y*cell, x*cell, (y+1)*cell, fill=colors["BLACK"], width=2)
+                            sx, sy = cam.world_to_screen(x, y)
+                            item_id = canvas.create_image(sx, sy, anchor=tk.NW, image=img)
+                            self._cached_items[(x, y, layer_idx)] = item_id
 
         if self.editor.show_grid:
-            grid_color = colors["GRID"]
             for x in range(w + 1):
-                canvas.create_line(x*cell, 0, x*cell, CFG.height_px, fill=grid_color, width=1)
+                x1, y1 = cam.world_to_screen(x, 0)
+                x2, y2 = cam.world_to_screen(x, h)
+                line_id = canvas.create_line(x1, y1, x2, y2, fill=colors["GRID"], width=1)
+                self._cached_grid_items.append(line_id)
             for y in range(h + 1):
-                canvas.create_line(0, y*cell, CFG.width_px, y*cell, fill=grid_color, width=1)
+                x1, y1 = cam.world_to_screen(0, y)
+                x2, y2 = cam.world_to_screen(w, y)
+                line_id = canvas.create_line(x1, y1, x2, y2, fill=colors["GRID"], width=1)
+                self._cached_grid_items.append(line_id)
+
+    def update_cell(self, x: int, y: int, layer_idx: int, tex_name: str):
+        canvas = self.editor.ui.canvas
+        if not canvas:
+            return
+        key = (x, y, layer_idx)
+        if key in self._cached_items:
+            canvas.delete(self._cached_items[key])
+            del self._cached_items[key]
+        if tex_name != EMPTY:
+            img = self.editor.tex.get_block(tex_name)
+            if img:
+                sx, sy = self.editor.camera.world_to_screen(x, y)
+                item_id = canvas.create_image(sx, sy, anchor=tk.NW, image=img)
+                self._cached_items[key] = item_id
+
+    def update_grid(self):
+        canvas = self.editor.ui.canvas
+        if not canvas:
+            return
+        for item_id in self._cached_grid_items:
+            canvas.delete(item_id)
+        self._cached_grid_items.clear()
+        if not self.editor.show_grid:
+            return
+        w, h = CFG.map_width, CFG.map_height
+        colors = CFG.colors
+        cam = self.editor.camera
+        for x in range(w + 1):
+            x1, y1 = cam.world_to_screen(x, 0)
+            x2, y2 = cam.world_to_screen(x, h)
+            line_id = canvas.create_line(x1, y1, x2, y2, fill=colors["GRID"], width=1)
+            self._cached_grid_items.append(line_id)
+        for y in range(h + 1):
+            x1, y1 = cam.world_to_screen(0, y)
+            x2, y2 = cam.world_to_screen(w, y)
+            line_id = canvas.create_line(x1, y1, x2, y2, fill=colors["GRID"], width=1)
+            self._cached_grid_items.append(line_id)
 
     def on_press(self, e: tk.Event) -> None:
         self.editor.save_state()
         self._drag = True
-        xc = e.x // CFG.cell_size
-        yc = e.y // CFG.cell_size
+        wx, wy = self.editor.camera.screen_to_world(e.x, e.y)
+        xc = int(wx)
+        yc = int(wy)
         if 0 <= yc < CFG.map_height and 0 <= xc < CFG.map_width:
             self._last = (xc, yc)
             self._apply(e.x, e.y)
@@ -173,10 +305,9 @@ class DrawingEngine:
             return
         if self.editor.tool_manager.pipette_mode or self.editor.tool_manager.flood_mode:
             return
-        if self.editor.tool_manager.fence:
-            return
-        xc = e.x // CFG.cell_size
-        yc = e.y // CFG.cell_size
+        wx, wy = self.editor.camera.screen_to_world(e.x, e.y)
+        xc = int(wx)
+        yc = int(wy)
         if not (0 <= yc < CFG.map_height and 0 <= xc < CFG.map_width):
             return
         if self._last:
@@ -187,7 +318,7 @@ class DrawingEngine:
                 if self._brush(cx, cy):
                     changed = True
             if changed:
-                self.draw()
+                self.draw(full_redraw=False)
         else:
             self._apply(e.x, e.y)
         self._last = (xc, yc)
@@ -195,6 +326,9 @@ class DrawingEngine:
     def on_release(self, e: tk.Event) -> None:
         self._drag = False
         self._last = None
+        if self._redraw_timer:
+            self.editor.root.after_cancel(self._redraw_timer)
+            self._full_redraw()
 
     def _line(self, x0: int, y0: int, x1: int, y1: int) -> List[Tuple[int, int]]:
         cells = []
@@ -218,9 +352,6 @@ class DrawingEngine:
         return cells
 
     def _brush(self, x: int, y: int) -> bool:
-        if self.editor.tool_manager.fence:
-            return False
-
         layer = self.editor.layer_manager.get_active_layer_obj()
         changed = False
         left = x - (self.editor.tool_manager.brush_size - 1) // 2
@@ -234,44 +365,23 @@ class DrawingEngine:
                     new_value = self.editor.tool_manager.tool if self.editor.tool_manager.tool is not None else EMPTY
                     if layer.grid[ny][nx] != new_value:
                         layer.grid[ny][nx] = new_value
+                        self.update_cell(nx, ny, self.editor.layer_manager.current_layer, new_value)
                         changed = True
         return changed
 
     def _apply(self, px: int, py: int) -> None:
-        xc = px // CFG.cell_size
-        yc = py // CFG.cell_size
+        wx, wy = self.editor.camera.screen_to_world(px, py)
+        xc = int(wx)
+        yc = int(wy)
         if not (0 <= yc < CFG.map_height and 0 <= xc < CFG.map_width):
             return
 
-        layer = self.editor.layer_manager.get_active_layer_obj()
-
-        if self.editor.tool_manager.fence:
-            self._apply_fence(px, py, xc, yc, layer)
-        elif self.editor.tool_manager.pipette_mode:
+        if self.editor.tool_manager.pipette_mode:
             self._apply_pipette(xc, yc)
         elif self.editor.tool_manager.flood_mode:
             self._apply_flood_fill(xc, yc)
         else:
             self._brush(xc, yc)
-            self.draw()
-
-    def _apply_fence(self, px: int, py: int, xc: int, yc: int, layer) -> None:
-        x0, y0 = xc * CFG.cell_size, yc * CFG.cell_size
-        d = [abs(py - y0), abs(py - (y0 + CFG.cell_size)), 
-             abs(px - x0), abs(px - (x0 + CFG.cell_size))]
-        m = min(d)
-        threshold = CFG.cell_size // 3
-        if m > threshold:
-            return
-        if m == d[0] and yc > 0:
-            layer.fh[yc][xc] = not layer.fh[yc][xc]
-        elif m == d[1] and yc < CFG.map_height:
-            layer.fh[yc+1][xc] = not layer.fh[yc+1][xc]
-        elif m == d[2] and xc > 0:
-            layer.fv[yc][xc] = not layer.fv[yc][xc]
-        elif m == d[3] and xc < CFG.map_width:
-            layer.fv[yc][xc+1] = not layer.fv[yc][xc+1]
-        self.draw()
 
     def _apply_pipette(self, xc: int, yc: int) -> None:
         for idx in range(len(self.editor.map.layers) - 1, -1, -1):
@@ -281,7 +391,6 @@ class DrawingEngine:
             if tex_name != EMPTY:
                 self.editor.tool_manager.set_tool(tex_name, False)
                 self.editor.tool_manager.pipette_mode = False
-                self.draw()
                 self.editor.update_status()
                 return
         self.editor.tool_manager.pipette_mode = False
@@ -290,7 +399,7 @@ class DrawingEngine:
 
     def _apply_flood_fill(self, xc: int, yc: int) -> None:
         if self.editor.tool_manager.fill_tool != EMPTY:
-            self._flood_fill(xc, yc, self.editor.tool_manager.fill_tool)
+            self._flood_fill_scanline(xc, yc, self.editor.tool_manager.fill_tool)
             self.editor.tool_manager.tool = self.editor.tool_manager.fill_tool
             self.editor.tool_manager.flood_mode = False
             self.editor.update_status()
@@ -299,7 +408,7 @@ class DrawingEngine:
             self.editor.update_status()
             self.editor.console._print("Заливка: сначала выберите текстуру", "error")
 
-    def _flood_fill(self, x: int, y: int, new_tex: str) -> None:
+    def _flood_fill_scanline(self, x: int, y: int, new_tex: str) -> None:
         layer = self.editor.layer_manager.get_active_layer_obj()
         old_tex = layer.grid[y][x]
         if old_tex == new_tex:
@@ -312,13 +421,24 @@ class DrawingEngine:
                 continue
             if layer.grid[cy][cx] != old_tex:
                 continue
-            layer.grid[cy][cx] = new_tex
-            stack.extend([(cx+1, cy), (cx-1, cy), (cx, cy+1), (cx, cy-1)])
-        self.draw()
+            left = cx
+            right = cx
+            while left-1 >= 0 and layer.grid[cy][left-1] == old_tex:
+                left -= 1
+            while right+1 < w and layer.grid[cy][right+1] == old_tex:
+                right += 1
+            for nx in range(left, right+1):
+                layer.grid[cy][nx] = new_tex
+                self.update_cell(nx, cy, self.editor.layer_manager.current_layer, new_tex)
+                if cy-1 >= 0 and layer.grid[cy-1][nx] == old_tex:
+                    stack.append((nx, cy-1))
+                if cy+1 < h and layer.grid[cy+1][nx] == old_tex:
+                    stack.append((nx, cy+1))
 
     def pick_texture(self, event: tk.Event) -> None:
-        xc = event.x // CFG.cell_size
-        yc = event.y // CFG.cell_size
+        wx, wy = self.editor.camera.screen_to_world(event.x, event.y)
+        xc = int(wx)
+        yc = int(wy)
         if not (0 <= xc < CFG.map_width and 0 <= yc < CFG.map_height):
             return
         for idx in range(len(self.editor.map.layers) - 1, -1, -1):
