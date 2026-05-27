@@ -4,7 +4,6 @@ from typing import Optional
 from .config import CFG, EMPTY
 from .hotbar import HotbarWidget, HotbarConfigWindow
 
-
 class UIManager:
     def __init__(self, editor):
         self.editor = editor
@@ -57,9 +56,24 @@ class UIManager:
         self.left_block = tk.Frame(self.toolbar_frame, bg=colors["BG_PANEL"])
         self.left_block.pack(side=tk.LEFT, padx=5)
 
-        self._add_tool_button(self.left_block, "void.png", "Ластик", lambda: self.editor.tool_manager.set_tool(EMPTY, False))
-        self._add_tool_button(self.left_block, "find.png", "Пипетка", lambda: self.editor.tool_manager.set_tool(-1, False))
-        self._add_tool_button(self.left_block, "fill.png", "Заливка", lambda: self.editor.tool_manager.set_tool(-2, False))
+
+        btn_eraser = tk.Button(self.left_block, image=self.editor.tex.get_icon("void.png"),
+                               command=lambda: self.editor.tool_manager.set_tool(EMPTY, False),
+                               bg=colors["BUTTON"], fg=colors["TEXT"],
+                               activebackground=colors["BUTTON_ACTIVE"])
+        btn_eraser.pack(side=tk.LEFT, padx=2)
+
+        btn_pipette = tk.Button(self.left_block, image=self.editor.tex.get_icon("find.png"),
+                                command=lambda: self.editor.tool_manager.set_tool(-1, False),
+                                bg=colors["BUTTON"], fg=colors["TEXT"],
+                                activebackground=colors["BUTTON_ACTIVE"])
+        btn_pipette.pack(side=tk.LEFT, padx=2)
+
+        btn_fill = tk.Button(self.left_block, image=self.editor.tex.get_icon("fill.png"),
+                             command=lambda: self.editor.tool_manager.set_tool(-2, False),
+                             bg=colors["BUTTON"], fg=colors["TEXT"],
+                             activebackground=colors["BUTTON_ACTIVE"])
+        btn_fill.pack(side=tk.LEFT, padx=2)
 
         self.hotbar_widget = HotbarWidget(
             self.toolbar_frame,
@@ -72,19 +86,6 @@ class UIManager:
                              bg=colors["BUTTON"], fg=colors["TEXT"],
                              activebackground=colors["BUTTON_ACTIVE"])
         self.hotbar_settings_btn.pack(side=tk.LEFT, padx=2)
-
-    def _add_tool_button(self, parent, icon: str, tooltip: str, command) -> None:
-        img = self.editor.tex.get_icon(icon)
-        colors = CFG.colors
-        if img:
-            btn = tk.Button(parent, image=img, relief=tk.SOLID, bd=1, command=command,
-                           bg=colors["BUTTON"], fg=colors["TEXT"],
-                           activebackground=colors["BUTTON_ACTIVE"])
-        else:
-            btn = tk.Button(parent, text=icon.split('.')[0], relief=tk.SOLID, bd=1, command=command,
-                           bg=colors["BUTTON"], fg=colors["TEXT"],
-                           activebackground=colors["BUTTON_ACTIVE"])
-        btn.pack(side=tk.LEFT, padx=2)
 
     def refresh_hotbar(self) -> None:
         if self.hotbar_widget:
@@ -191,10 +192,6 @@ class UIManager:
         if self.editor.map.get_num_layers() <= 1:
             self.editor.console._print("Ошибка: нельзя удалить единственный слой", "error")
         else:
-            self.editor.console.ask_yes_no(f"Удалить слой {self.editor.layer_manager.current_layer + 1}?", self._confirm_remove_layer)
-
-    def _confirm_remove_layer(self, confirmed: bool) -> None:
-        if confirmed:
             self.editor.layer_manager.remove_layer()
             self.editor.console._print(f"✓ Слой удалён", "success")
 
@@ -261,67 +258,100 @@ class UIManager:
         self.editor.theme.register_widget("brush_size_label", self.brush_size_label)
         self.editor.theme.register_widget("grid_check", self.grid_check)
 
-    def _make_button(self, parent: tk.Frame, icon: str, text: str, cmd: callable, compound: str = tk.LEFT) -> tk.Button:
-        img = self.editor.tex.get_icon(icon)
-        colors = CFG.colors
-        if img:
-            btn = tk.Button(parent, image=img, text=text, compound=compound,
-                           relief=tk.SOLID, bd=1, command=cmd,
-                           bg=colors["BUTTON"], fg=colors["TEXT"],
-                           activebackground=colors["BUTTON_ACTIVE"])
-        else:
-            btn = tk.Button(parent, text=text, bg=colors["BUTTON"], fg=colors["TEXT"],
-                           relief=tk.SOLID, bd=1, command=cmd,
-                           activebackground=colors["BUTTON_ACTIVE"])
-        return btn
-
     def _build_action_buttons(self) -> None:
-        btn_export = self._make_button(self.bottom_frame, "download.png", ".png", self.editor.save_png)
+        colors = CFG.colors
+
+        img_export = self.editor.tex.get_icon("download.png")
+        btn_export = tk.Button(self.bottom_frame, image=img_export, text=".png", compound=tk.LEFT,
+                               command=self.editor.save_png, bg=colors["BUTTON"], fg=colors["TEXT"],
+                               activebackground=colors["BUTTON_ACTIVE"])
         btn_export.pack(side=tk.LEFT, padx=2)
-        btn_save_json = self._make_button(self.bottom_frame, "download.png", ".json", self.editor.save_json)
+
+        img_save_json = self.editor.tex.get_icon("download.png")
+        btn_save_json = tk.Button(self.bottom_frame, image=img_save_json, text=".json", compound=tk.LEFT,
+                                  command=self.editor.save_json, bg=colors["BUTTON"], fg=colors["TEXT"],
+                                  activebackground=colors["BUTTON_ACTIVE"])
         btn_save_json.pack(side=tk.LEFT, padx=2)
-        btn_load_json = self._make_button(self.bottom_frame, "upload.png", ".json", self.editor.load_json)
+
+        img_load_json = self.editor.tex.get_icon("upload.png")
+        btn_load_json = tk.Button(self.bottom_frame, image=img_load_json, text=".json", compound=tk.LEFT,
+                                  command=self.editor.load_json, bg=colors["BUTTON"], fg=colors["TEXT"],
+                                  activebackground=colors["BUTTON_ACTIVE"])
         btn_load_json.pack(side=tk.LEFT, padx=2)
 
         self._add_separator(self.bottom_frame)
 
-        btn_clear = self._make_button(self.bottom_frame, "clear.png", "", self._clear_callback)
+        img_clear = self.editor.tex.get_icon("clear.png")
+        btn_clear = tk.Button(self.bottom_frame, image=img_clear, text="", command=self._clear_callback,
+                              bg=colors["BUTTON"], fg=colors["TEXT"],
+                              activebackground=colors["BUTTON_ACTIVE"])
         btn_clear.pack(side=tk.LEFT, padx=2)
 
         self._add_separator(self.bottom_frame)
 
-        btn_undo = self._make_button(self.bottom_frame, "undo.png", "", self.editor.undo_op)
+        img_undo = self.editor.tex.get_icon("undo.png")
+        btn_undo = tk.Button(self.bottom_frame, image=img_undo, text="", command=self.editor.undo_op,
+                             bg=colors["BUTTON"], fg=colors["TEXT"],
+                             activebackground=colors["BUTTON_ACTIVE"])
         btn_undo.pack(side=tk.LEFT, padx=2)
-        btn_redo = self._make_button(self.bottom_frame, "redo.png", "", self.editor.redo_op)
+
+        img_redo = self.editor.tex.get_icon("redo.png")
+        btn_redo = tk.Button(self.bottom_frame, image=img_redo, text="", command=self.editor.redo_op,
+                             bg=colors["BUTTON"], fg=colors["TEXT"],
+                             activebackground=colors["BUTTON_ACTIVE"])
         btn_redo.pack(side=tk.LEFT, padx=2)
 
         self._add_separator(self.bottom_frame)
 
+        btn_select = tk.Button(self.bottom_frame, text="Выделить", command=self.editor.enable_selection_tool,
+                             bg=colors["BUTTON"], fg=colors["TEXT"],
+                             activebackground=colors["BUTTON_ACTIVE"])
+        btn_select.pack(side=tk.LEFT, padx=2)
+
+        btn_copy = tk.Button(self.bottom_frame, text="Копировать", command=self.editor.copy_selection,
+                             bg=colors["BUTTON"], fg=colors["TEXT"],
+                             activebackground=colors["BUTTON_ACTIVE"])
+        btn_copy.pack(side=tk.LEFT, padx=2)
+
+        btn_cut = tk.Button(self.bottom_frame, text="Вырезать", command=self.editor.cut_selection,
+                             bg=colors["BUTTON"], fg=colors["TEXT"],
+                             activebackground=colors["BUTTON_ACTIVE"])
+        btn_cut.pack(side=tk.LEFT, padx=2)
+
+        btn_paste = tk.Button(self.bottom_frame, text="Вставить", command=self.editor.paste_selection,
+                             bg=colors["BUTTON"], fg=colors["TEXT"],
+                             activebackground=colors["BUTTON_ACTIVE"])
+        btn_paste.pack(side=tk.LEFT, padx=2)
+
+        self._add_separator(self.bottom_frame)
+
         btn_import = tk.Button(self.bottom_frame, text="Загрузить текстуры", command=self.editor.import_tex,
-                             bg=CFG.colors["BUTTON"], fg=CFG.colors["TEXT"],
-                             activebackground=CFG.colors["BUTTON_ACTIVE"])
+                             bg=colors["BUTTON"], fg=colors["TEXT"],
+                             activebackground=colors["BUTTON_ACTIVE"])
         btn_import.pack(side=tk.LEFT, padx=2)
+
         btn_delete = tk.Button(self.bottom_frame, text="Удалить текстуры", command=self.editor.del_tex,
-                             bg=CFG.colors["BUTTON"], fg=CFG.colors["TEXT"],
-                             activebackground=CFG.colors["BUTTON_ACTIVE"])
+                             bg=colors["BUTTON"], fg=colors["TEXT"],
+                             activebackground=colors["BUTTON_ACTIVE"])
         btn_delete.pack(side=tk.LEFT, padx=2)
 
         self._add_separator(self.bottom_frame)
 
         btn_load_preset = tk.Button(self.bottom_frame, text="Загрузить пресет", command=self.editor.load_preset,
-                                   bg=CFG.colors["BUTTON"], fg=CFG.colors["TEXT"],
-                                   activebackground=CFG.colors["BUTTON_ACTIVE"])
+                                   bg=colors["BUTTON"], fg=colors["TEXT"],
+                                   activebackground=colors["BUTTON_ACTIVE"])
         btn_load_preset.pack(side=tk.LEFT, padx=2)
+
         btn_save_preset = tk.Button(self.bottom_frame, text="Сохранить пресет", command=self.editor.save_preset,
-                                   bg=CFG.colors["BUTTON"], fg=CFG.colors["TEXT"],
-                                   activebackground=CFG.colors["BUTTON_ACTIVE"])
+                                   bg=colors["BUTTON"], fg=colors["TEXT"],
+                                   activebackground=colors["BUTTON_ACTIVE"])
         btn_save_preset.pack(side=tk.LEFT, padx=2)
 
     def _add_separator(self, parent) -> None:
         tk.Frame(parent, width=2, bg=CFG.colors["GREY"], relief=tk.RAISED).pack(side=tk.LEFT, padx=5, fill=tk.Y)
 
     def _clear_callback(self) -> None:
-        self.editor.clear_all_layers(ask_confirm=True)
+        self.editor.clear_all_layers()
 
     def _spinbox_changed(self) -> None:
         try:

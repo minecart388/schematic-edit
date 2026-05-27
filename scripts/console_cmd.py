@@ -11,7 +11,6 @@ class ConsoleCommands:
         self.commands = {
             'help': self._cmd_help,
             'circle': self._cmd_circle,
-            'square': self._cmd_square,
             'rect': self._cmd_rect,
             'line': self._cmd_line,
             'clear': self._cmd_clear,
@@ -22,7 +21,9 @@ class ConsoleCommands:
             'presets': self._cmd_presets,
             'save_preset': self._cmd_save_preset,
             'delete_preset': self._cmd_delete_preset,
-            'load_preset': self._cmd_load_preset
+            'load_preset': self._cmd_load_preset,
+            'replace': self._cmd_replace,
+            'brush': self._cmd_brush
         }
     
     def execute(self, command: str, parts: List[str]) -> bool:
@@ -37,19 +38,20 @@ class ConsoleCommands:
 Доступные команды:
 ------------------------------------------
   circle x y radius fill [texture.png] - круг
-  square x y size fill [texture.png] - квадрат
   rect x1 y1 x2 y2 fill [texture.png] - прямоугольник
-  line x1 y1 x2 y2 толщина [texture.png] - линия
+  line x1 y1 x2 y2 <thickness> [texture.png] - линия
   layers - показать информацию о слоях
   layer <номер> - переключиться на слой
-  layer <номер> show - показать детали слоя
-  layer <номер> del - удалить слой (с подтверждением)
+  layer <номер> show - показать/скрыть слой
+  layer <номер> del - удалить слой
   tool - показать текущий инструмент
-  clear [all|layer] - очистить всё или текущий слой
+  clear <all/layer> - очистить всё или текущий слой
   presets - показать список пресетов
   save_preset - сохранить текущую карту как пресет
   load_preset - загрузить пресет
-  delete_preset <имя> - удалить пресет
+  delete_preset <name> - удалить пресет
+  replace <old> <new> - замена текстуры во всех слоях
+  brush <размер> - установить размер кисти
   clear_console - очистить консоль
   help - показать справку
 
@@ -126,38 +128,6 @@ class ConsoleCommands:
             for px, py in points:
                 if 0 <= px < CFG.map_width and 0 <= py < CFG.map_height:
                     layer.grid[py][px] = tex_name
-    
-    def _cmd_square(self, parts: list) -> None:
-        if len(parts) < 5 or len(parts) > 6:
-            self.console._print("Ошибка использования: square x y size fill [texture.png]", "error")
-            self.console._print("Пример: square 50 25 20 true stone.png", "info")
-            return
-
-        try:
-            x = int(parts[1])
-            y = int(parts[2])
-            size = int(parts[3])
-            fill = parts[4].lower() in ['true', '1', 'yes', 't']
-            tex_name = parts[5] if len(parts) == 6 else None
-            tool = self._get_current_texture_or_default(tex_name)
-            if tool is None:
-                return
-            if size < 1:
-                self.console._print("Ошибка: размер должен быть больше 0", "error")
-                return
-
-            half = size // 2
-            x1 = x - half
-            y1 = y - half
-            x2 = x + half
-            y2 = y + half
-
-            self.editor.save_state()
-            self._draw_rectangle(x1, y1, x2, y2, fill, tool)
-            self.editor.draw()
-            self.console._print(f"✓ Квадрат нарисован: центр({x},{y}) размер={size} заливка={'да' if fill else 'нет'} текстура={tool}", "success")
-        except ValueError:
-            self.console._print("Ошибка: неверный формат чисел", "error")
     
     def _cmd_rect(self, parts: list) -> None:
         if len(parts) < 6 or len(parts) > 7:
@@ -278,39 +248,6 @@ class ConsoleCommands:
             status = "вид" if self.editor.map.visible[i] else "скрыт"
             self.console._print(f"  Слой {i+1}: [{visibility}] {status}", "normal")
     
-    def _show_layer_details(self, idx: int) -> None:
-        layer = self.editor.map.layers[idx]
-        visible = self.editor.map.visible[idx]
-        filled = 0
-        for row in layer.grid:
-            for cell in row:
-                if cell != EMPTY:
-                    filled += 1
-        total = CFG.map_width * CFG.map_height
-        self.console._print(f"Слой {idx + 1}:", "info")
-        self.console._print(f"  Видимость: {'да' if visible else 'нет'}", "info")
-        self.console._print(f"  Заполнено: {filled} / {total} ({filled*100//total if total else 0}%)", "info")
-        self.console._print(f"  Размер сетки: {CFG.map_width} x {CFG.map_height}", "info")
-    
-    def _confirm_delete_layer(self, idx: int) -> None:
-        if self.editor.map.get_num_layers() <= 1:
-            self.console._print("Ошибка: нельзя удалить единственный слой", "error")
-            return
-        self.console.ask_yes_no(f"Удалить слой {idx + 1}?", lambda confirmed: self._do_delete_layer(idx, confirmed))
-    
-    def _do_delete_layer(self, idx: int, confirmed: bool) -> None:
-        if not confirmed:
-            self.console._print("Удаление слоя отменено", "info")
-            return
-        self.editor.save_state()
-        self.editor.map.remove_layer(idx)
-        if self.editor.layer_manager.current_layer >= self.editor.map.get_num_layers():
-            self.editor.layer_manager.current_layer = self.editor.map.get_num_layers() - 1
-        self.editor.layer_manager.set_active_layer(self.editor.layer_manager.current_layer)
-        self.editor.ui.update_layer_ui()
-        self.editor.draw()
-        self.console._print(f"✓ Слой {idx + 1} удалён", "success")
-    
     def _cmd_layer(self, parts: list) -> None:
         if len(parts) < 2:
             self.console._print("Ошибка использования: layer <номер> [show|del]", "error")
@@ -330,9 +267,23 @@ class ConsoleCommands:
             elif len(parts) == 3:
                 subcmd = parts[2].lower()
                 if subcmd == "show":
-                    self._show_layer_details(idx)
+                    self.editor.map.visible[idx] = not self.editor.map.visible[idx]
+                    self.editor.ui.update_visibility_check()
+                    self.editor.drawing.draw()
+                    status = "показан" if self.editor.map.visible[idx] else "скрыт"
+                    self.console._print(f"Слой {idx+1} {status}", "success")
                 elif subcmd == "del":
-                    self._confirm_delete_layer(idx)
+                    if self.editor.map.get_num_layers() <= 1:
+                        self.console._print("Ошибка: нельзя удалить единственный слой", "error")
+                        return
+                    self.editor.save_state()
+                    self.editor.map.remove_layer(idx)
+                    if self.editor.layer_manager.current_layer >= self.editor.map.get_num_layers():
+                        self.editor.layer_manager.current_layer = self.editor.map.get_num_layers() - 1
+                    self.editor.layer_manager.set_active_layer(self.editor.layer_manager.current_layer)
+                    self.editor.ui.update_layer_ui()
+                    self.editor.drawing.draw()
+                    self.console._print(f"✓ Слой {idx + 1} удалён", "success")
                 else:
                     self.console._print(f"Ошибка: неизвестная подкоманда '{subcmd}'", "error")
             else:
@@ -348,9 +299,9 @@ class ConsoleCommands:
     
     def _cmd_clear(self, parts: list) -> None:
         if len(parts) > 1 and parts[1] == "layer":
-            self.editor.clear_layer(self.editor.layer_manager.current_layer, ask_confirm=True)
+            self.editor.clear_layer(self.editor.layer_manager.current_layer)
         else:
-            self.editor.clear_all_layers(ask_confirm=True)
+            self.editor.clear_all_layers()
     
     def _cmd_clear_console(self, parts=None) -> None:
         self.console.text.config(state=tk.NORMAL)
@@ -376,7 +327,10 @@ class ConsoleCommands:
             self.console._print("Пример: delete_preset kakoi_to", "info")
             return
         preset_name = parts[1]
-        self.console._confirm_delete_preset(preset_name)
+        if self.editor.file.delete_preset(preset_name):
+            self.console._print(f"✓ Пресет '{preset_name}.json' удалён", "success")
+        else:
+            self.console._print(f"Ошибка удаления пресета '{preset_name}.json'", "error")
     
     def _cmd_load_preset(self, parts=None) -> None:
         presets = self.editor.file.list_presets()
@@ -384,3 +338,21 @@ class ConsoleCommands:
             self.console._print("Нет доступных пресетов", "error")
             return
         self.console.show_preset_selection(presets)
+
+    def _cmd_replace(self, parts: list) -> None:
+        if len(parts) != 3:
+            self.console._print("Ошибка использования: replace старая_текстура.png новая_текстура.png", "error")
+            return
+        old = parts[1]
+        new = parts[2]
+        self.editor.replace_texture_all_layers(old, new)
+
+    def _cmd_brush(self, parts: list) -> None:
+        if len(parts) != 2:
+            self.console._print("Ошибка использования: brush <размер>", "error")
+            return
+        try:
+            size = int(parts[1])
+            self.editor.set_brush_size(size)
+        except ValueError:
+            self.console._print("Ошибка: размер должен быть числом", "error")

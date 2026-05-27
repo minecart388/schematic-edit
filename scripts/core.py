@@ -55,7 +55,8 @@ class TexMgr:
         if not os.path.isdir(folder):
             return
         icon_names = ["void.png", "find.png", "fill.png", "undo.png", "redo.png",
-                    "download.png", "upload.png", "clear.png"]
+                    "download.png", "upload.png", "clear.png", "copy.png", "cut.png",
+                    "paste.png", "invert.png", "border.png", "text.png"]
         for name in icon_names:
             p = os.path.join(folder, name)
             if os.path.exists(p):
@@ -170,6 +171,73 @@ class Layer:
         self.w = w
         self.h = h
 
+    def copy_rect(self, x1: int, y1: int, x2: int, y2: int) -> List[List[str]]:
+        left = max(0, min(x1, x2))
+        right = min(self.w - 1, max(x1, x2))
+        top = max(0, min(y1, y2))
+        bottom = min(self.h - 1, max(y1, y2))
+        data = []
+        for y in range(top, bottom + 1):
+            row = []
+            for x in range(left, right + 1):
+                row.append(self.grid[y][x])
+            data.append(row)
+        return data
+
+    def paste_rect(self, x1: int, y1: int, data: List[List[str]]) -> None:
+        if not data:
+            return
+        h_data = len(data)
+        w_data = len(data[0]) if h_data > 0 else 0
+        for dy in range(h_data):
+            for dx in range(w_data):
+                nx = x1 + dx
+                ny = y1 + dy
+                if 0 <= nx < self.w and 0 <= ny < self.h:
+                    self.grid[ny][nx] = data[dy][dx]
+
+    def fill_rect(self, x1: int, y1: int, x2: int, y2: int, tex_name: str) -> None:
+        left = max(0, min(x1, x2))
+        right = min(self.w - 1, max(x1, x2))
+        top = max(0, min(y1, y2))
+        bottom = min(self.h - 1, max(y1, y2))
+        for y in range(top, bottom + 1):
+            for x in range(left, right + 1):
+                self.grid[y][x] = tex_name
+
+    def fill_border(self, x1: int, y1: int, x2: int, y2: int, tex_name: str) -> None:
+        left = max(0, min(x1, x2))
+        right = min(self.w - 1, max(x1, x2))
+        top = max(0, min(y1, y2))
+        bottom = min(self.h - 1, max(y1, y2))
+        for x in range(left, right + 1):
+            if 0 <= top < self.h:
+                self.grid[top][x] = tex_name
+            if 0 <= bottom < self.h:
+                self.grid[bottom][x] = tex_name
+        for y in range(top + 1, bottom):
+            if 0 <= left < self.w:
+                self.grid[y][left] = tex_name
+            if 0 <= right < self.w:
+                self.grid[y][right] = tex_name
+
+    def move_rect(self, x1: int, y1: int, x2: int, y2: int, dx: int, dy: int) -> None:
+        data = self.copy_rect(x1, y1, x2, y2)
+        left = max(0, min(x1, x2))
+        right = min(self.w - 1, max(x1, x2))
+        top = max(0, min(y1, y2))
+        bottom = min(self.h - 1, max(y1, y2))
+        for y in range(top, bottom + 1):
+            for x in range(left, right + 1):
+                self.grid[y][x] = EMPTY
+        self.paste_rect(x1 + dx, y1 + dy, data)
+
+    def replace_texture(self, old_tex: str, new_tex: str) -> None:
+        for y in range(self.h):
+            for x in range(self.w):
+                if self.grid[y][x] == old_tex:
+                    self.grid[y][x] = new_tex
+
 class Map:
     def __init__(self, w: int = CFG.map_width, h: int = CFG.map_height) -> None:
         self.w = w
@@ -237,6 +305,20 @@ class Map:
     def get_num_layers(self) -> int:
         return len(self.layers)
 
+    def copy_rect_all_layers(self, x1: int, y1: int, x2: int, y2: int) -> List[List[List[str]]]:
+        result = []
+        for layer in self.layers:
+            result.append(layer.copy_rect(x1, y1, x2, y2))
+        return result
+
+    def paste_rect_to_layer(self, layer_idx: int, x1: int, y1: int, data: List[List[str]]) -> None:
+        if 0 <= layer_idx < len(self.layers):
+            self.layers[layer_idx].paste_rect(x1, y1, data)
+
+    def replace_texture_all_layers(self, old_tex: str, new_tex: str) -> None:
+        for layer in self.layers:
+            layer.replace_texture(old_tex, new_tex)
+
 class FileMgr:
     def __init__(self, map_obj: Map, tex: TexMgr, preset_dir: str) -> None:
         self.map = map_obj
@@ -287,3 +369,10 @@ class FileMgr:
         if not os.path.isdir(self.preset_dir):
             return []
         return [os.path.splitext(f)[0] for f in os.listdir(self.preset_dir) if f.endswith('.json')]
+
+    def delete_preset(self, name: str) -> bool:
+        preset_path = os.path.join(self.preset_dir, name + ".json")
+        if os.path.exists(preset_path):
+            os.remove(preset_path)
+            return True
+        return False

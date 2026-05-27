@@ -32,53 +32,17 @@ Multi-layer map editor with support for custom textures, a preset system, a comm
 - **Textures** – appear after loading, select a texture to draw
 - **Hotbar** – 9 slots for quick access to textures
 
-### Layer panel
-
-#### Layer switching
-- **Up/down arrows** or enter the layer number in the field.
-- **Layer list** opens a dialog for managing all layers.
-
-#### Layer buttons
-- **`+`** - add a new layer (maximum 383)
-- **`-`** - delete the current layer
-- **`View`** – hide/show the current layer
-
-### Action bar (bottom)
-
-#### Saving and loading
-- **`.png`** – export the map to an image (scale ×4, takes into account visible layers, borders and grid)
-- **`.json`** – save the project to a file
-- **`.json`** – save the project to a filejson`** – loading a project from a file
-
-#### History
-- **↩️** – undoing the last action
-- **↪️** – repeating the undone action
-
-#### Textures
-- **Load textures** – adding PNG files to the project
-- **Delete textures** – opens a dialog for selecting textures to delete (you can delete all or by number)
-
-#### Presets
-- **Load preset** – loading a ready-made map template
-- **Save preset** – save the current map as a template
-
-#### Brush
-- **`-`** / **`+`** – reduce/increase the brush size (from 1 to 10)
-- **Number** – current brush size
-
-#### Grid
-- **Grid** – enable/disable the grid display
-
-#### Basic console commands
+### console commands
 
 - `help` – show help
 - `circle x y radius fill` – draw a circle
-- `square x y size fill` – draw a square
 - `rect x1 y1 x2 y2 fill` – draw a rectangle
-- `line x1 y1 x2 y2 thickness` – draw a line
-- `clear [all|layer]` – clear all layers or the current layer
+- `line x1 y1 x2 y2 <thickness>` – draw a line
+- `clear <all/layer>` – clear all layers or the current layer
 - `layers` – show layer information
 - `layer <number>` – switch to a layer
+- `layer <number> show` - show/hide layer
+- `layer <number> del` - delete layer
 - `tool` – show the current tool
 - `presets` – list of available presets
 - `save_preset` – save the current map as a preset
@@ -98,11 +62,6 @@ Multi-layer map editor with support for custom textures, a preset system, a comm
 2. Click with the left mouse button on the cell – the texture will be placed.
 3. Hold down the left button and drag the mouse to draw a line.
 4. You can change the brush size in the action bar.
-
-#### Drawing borders
-1. Click on the **"Border"** button.
-2. Click on the edge between two cells to create or delete a border.
-3. Borders are displayed as black lines.
 
 #### Using the eyedropper
 - **Method 1:** Click on the **"Eyedropper"** button, then click on the texture on the map.
@@ -146,18 +105,6 @@ Multi-layer map editor with support for custom textures, a preset system, a comm
 #### Deleting a preset
 1. Enter `delete_preset <name>` (without the `.json` extension) in the console.
 2. Confirm the deletion.
-
-### File formats
-
-#### JSON project
-- Preserves all layers, borders, and settings.
-- Use to save your work.
-- Format: plain text (can be edited manually).
-
-#### PNG export
-- Exports the map to an image.
-- Scale ×4 for better quality.
-- Saves:  - All visible layers  - Borders (black lines)  - Grid (if enabled)
 
 ## System requirements
 

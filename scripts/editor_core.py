@@ -189,6 +189,29 @@ class Camera:
         self.offset_y += (cy - ny) / self.zoom
         self.clamp()
 
+class Selection:
+    def __init__(self):
+        self.active = False
+        self.x1 = 0
+        self.y1 = 0
+        self.x2 = 0
+        self.y2 = 0
+        self.layer_idx = 0
+
+    def set_rect(self, x1: int, y1: int, x2: int, y2: int, layer_idx: int):
+        self.active = True
+        self.x1 = min(x1, x2)
+        self.y1 = min(y1, y2)
+        self.x2 = max(x1, x2)
+        self.y2 = max(y1, y2)
+        self.layer_idx = layer_idx
+
+    def clear(self):
+        self.active = False
+
+    def get_rect(self) -> Tuple[int, int, int, int]:
+        return self.x1, self.y1, self.x2, self.y2
+
 class DrawingEngine:
     def __init__(self, editor):
         self.editor = editor
@@ -198,6 +221,9 @@ class DrawingEngine:
         self._redraw_timer = None
         self._cached_items: Dict[Tuple[int, int, int], int] = {}
         self._cached_grid_items: List[int] = []
+        self._selection_rect_id: Optional[int] = None
+        self._selecting: bool = False
+        self._select_start: Optional[Tuple[int, int]] = None
 
     def draw(self, full_redraw: bool = True) -> None:
         canvas = self.editor.ui.canvas
@@ -252,6 +278,23 @@ class DrawingEngine:
                 line_id = canvas.create_line(x1, y1, x2, y2, fill=colors["GRID"], width=1)
                 self._cached_grid_items.append(line_id)
 
+        if self.editor.selection.active:
+            self._draw_selection_rect()
+
+    def _draw_selection_rect(self):
+        canvas = self.editor.ui.canvas
+        if not canvas:
+            return
+        if self._selection_rect_id:
+            canvas.delete(self._selection_rect_id)
+        x1, y1, x2, y2 = self.editor.selection.get_rect()
+        sx1, sy1 = self.editor.camera.world_to_screen(x1, y1)
+        sx2, sy2 = self.editor.camera.world_to_screen(x2 + 1, y2 + 1)
+        self._selection_rect_id = canvas.create_rectangle(
+            sx1, sy1, sx2, sy2,
+            outline="#FF0000", width=2, dash=(4, 2), tags="selection"
+        )
+
     def update_cell(self, x: int, y: int, layer_idx: int, tex_name: str):
         canvas = self.editor.ui.canvas
         if not canvas:
@@ -291,6 +334,12 @@ class DrawingEngine:
             self._cached_grid_items.append(line_id)
 
     def on_press(self, e: tk.Event) -> None:
+        if self.editor.tool_manager.selection_mode:
+            self._start_selection(e)
+            return
+        if self.editor.selection.active and e.state & 0x0004:  # Ctrl
+            self._start_move_selection(e)
+            return
         self.editor.save_state()
         self._drag = True
         wx, wy = self.editor.camera.screen_to_world(e.x, e.y)
@@ -300,7 +349,33 @@ class DrawingEngine:
             self._last = (xc, yc)
             self._apply(e.x, e.y)
 
+    def _start_selection(self, e: tk.Event):
+        wx, wy = self.editor.camera.screen_to_world(e.x, e.y)
+        self._selecting = True
+        self._select_start = (int(wx), int(wy))
+        self.editor.selection.clear()
+        if self._selection_rect_id:
+            self.editor.ui.canvas.delete(self._selection_rect_id)
+            self._selection_rect_id = None
+
+    def _start_move_selection(self, e: tk.Event):
+        if not self.editor.selection.active:
+            return
+        wx, wy = self.editor.camera.screen_to_world(e.x, e.y)
+        xc, yc = int(wx), int(wy)
+        x1, y1, x2, y2 = self.editor.selection.get_rect()
+        if x1 <= xc <= x2 and y1 <= yc <= y2:
+            self._drag = True
+            self._last = (xc, yc)
+            self._move_selection_offset = (0, 0)
+
     def on_drag(self, e: tk.Event) -> None:
+        if self._selecting:
+            self._update_selection(e)
+            return
+        if hasattr(self, '_move_selection_offset') and self._drag:
+            self._move_selection_drag(e)
+            return
         if not self._drag:
             return
         if self.editor.tool_manager.pipette_mode or self.editor.tool_manager.flood_mode:
@@ -323,7 +398,38 @@ class DrawingEngine:
             self._apply(e.x, e.y)
         self._last = (xc, yc)
 
+    def _update_selection(self, e: tk.Event):
+        wx, wy = self.editor.camera.screen_to_world(e.x, e.y)
+        x2 = int(wx)
+        y2 = int(wy)
+        x1, y1 = self._select_start
+        x1 = max(0, min(x1, CFG.map_width - 1))
+        y1 = max(0, min(y1, CFG.map_height - 1))
+        x2 = max(0, min(x2, CFG.map_width - 1))
+        y2 = max(0, min(y2, CFG.map_height - 1))
+        self.editor.selection.set_rect(x1, y1, x2, y2, self.editor.layer_manager.current_layer)
+        self._draw_selection_rect()
+
+    def _move_selection_drag(self, e: tk.Event):
+        wx, wy = self.editor.camera.screen_to_world(e.x, e.y)
+        xc, yc = int(wx), int(wy)
+        if self._last:
+            dx = xc - self._last[0]
+            dy = yc - self._last[1]
+            self._move_selection_offset = (dx, dy)
+            self._draw_selection_rect()
+            self._last = (xc, yc)
+
     def on_release(self, e: tk.Event) -> None:
+        if self._selecting:
+            self._selecting = False
+            self._select_start = None
+            return
+        if hasattr(self, '_move_selection_offset') and self._drag:
+            dx, dy = self._move_selection_offset
+            if dx != 0 or dy != 0:
+                self.editor.move_selection(dx, dy)
+            delattr(self, '_move_selection_offset')
         self._drag = False
         self._last = None
         if self._redraw_timer:

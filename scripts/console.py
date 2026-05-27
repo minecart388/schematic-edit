@@ -3,7 +3,6 @@ import tkinter as tk
 from typing import Optional, List, Tuple
 from .config import CFG, EMPTY
 from .console_cmd import ConsoleCommands
-import os
 
 class ConsoleManager:
     def __init__(self, editor):
@@ -87,7 +86,7 @@ class ConsoleManager:
         self._update_line_numbers()
 
         self._print("Консоль управления", "success")
-        self._print("Команды: help, circle, square, rect, line, clear, layers, layer, tool", "info")
+        self._print("Команды: help, circle, rect, line, clear, layers, layer, tool", "info")
 
     def on_mousewheel(self, event: tk.Event):
         if event.widget == self.text:
@@ -460,7 +459,10 @@ class ConsoleManager:
             preset_name = parts[0]
             if preset_name.endswith('.json'):
                 preset_name = preset_name[:-5]
-            self._confirm_delete_preset(preset_name)
+            if self.editor.file.delete_preset(preset_name):
+                self._print(f"✓ Пресет '{preset_name}.json' удалён", "success")
+            else:
+                self._print(f"Ошибка удаления пресета '{preset_name}.json'", "error")
         elif cmd_lower in [p.lower() for p in self.preset_list]:
             for p in self.preset_list:
                 if p.lower() == cmd_lower:
@@ -470,20 +472,6 @@ class ConsoleManager:
             self._print(f"Неизвестный пресет: {command}", "error")
             self._print("Введите название пресета", "info")
             self.waiting_for_preset = True
-
-    def _confirm_delete_preset(self, preset_name: str) -> None:
-        self.ask_yes_no(f"Удалить пресет '{preset_name}.json'?", lambda confirmed: self._delete_preset(preset_name, confirmed))
-
-    def _delete_preset(self, preset_name: str, confirmed: bool) -> None:
-        if confirmed:
-            preset_path = os.path.join(self.editor.preset_dir, preset_name + ".json")
-            try:
-                os.remove(preset_path)
-                self._print(f"✓ Пресет '{preset_name}.json' удалён", "success")
-            except Exception as e:
-                self._print(f"Ошибка удаления: {e}", "error")
-        else:
-            self._print(f"Удаление пресета '{preset_name}.json' отменено", "info")
 
     def _load_preset_file(self, preset_name: str) -> None:
         self.editor.save_state()
@@ -500,11 +488,6 @@ class ConsoleManager:
         self._print(question, "warning")
         self.waiting_for_input = True
         self.input_callback = callback
-
-    def ask_yes_no(self, question: str, callback) -> None:
-        self._print(question + " (yes/no): ", "warning")
-        self.waiting_for_input = True
-        self.input_callback = lambda answer: callback(answer.lower() in ['yes', 'y', 'да', 'д'])
 
     def show_preset_selection(self, presets: List[str]) -> None:
         if not presets:

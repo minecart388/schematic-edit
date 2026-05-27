@@ -7,7 +7,7 @@ from typing import Optional
 from PIL import Image, ImageDraw
 from .config import CFG, EMPTY, Settings, ProgressDialog
 from .core import TexMgr, Map, UndoMgr, FileMgr, path
-from .editor_core import ThemeManager, LayerManager, DrawingEngine, Camera
+from .editor_core import ThemeManager, LayerManager, DrawingEngine, Camera, Selection
 from .editor_ui import UIManager
 from .console import ConsoleManager
 from .hotbar import HotbarManager
@@ -20,6 +20,7 @@ class ToolManager:
         self.flood_mode: bool = False
         self.fill_tool: str = EMPTY
         self.brush_size: int = 1
+        self.selection_mode: bool = False
 
     def set_tool(self, code, from_hotbar: bool = False) -> None:
         if not from_hotbar:
@@ -28,6 +29,7 @@ class ToolManager:
         if code == -1:
             self.pipette_mode = True
             self.flood_mode = False
+            self.selection_mode = False
             self.tool = None
             self.editor.update_status()
             return
@@ -36,16 +38,27 @@ class ToolManager:
                 self.fill_tool = self.tool
                 self.flood_mode = True
                 self.pipette_mode = False
+                self.selection_mode = False
                 self.editor.update_status()
             else:
                 self.editor.console._print("Сначала выберите текстуру для заливки", "error")
             return
+        if code == -3:
+            self.selection_mode = True
+            self.pipette_mode = False
+            self.flood_mode = False
+            self.tool = None
+            self.editor.update_status()
+            return
         self.pipette_mode = False
         self.flood_mode = False
+        self.selection_mode = False
         self.tool = code
         self.editor.update_status()
 
     def get_tool_name(self) -> str:
+        if self.selection_mode:
+            return "Выделение"
         if self.pipette_mode:
             return "Пипетка"
         if self.flood_mode:
@@ -82,6 +95,8 @@ class Editor:
 
         self.layer_manager = LayerManager(self)
         self.drawing = DrawingEngine(self)
+        self.selection = Selection()
+        self.clipboard = None
 
         self.main_container = tk.Frame(self.root, bg=CFG.colors["BG_PANEL"])
         self.main_container.pack(fill=tk.BOTH, expand=True)
@@ -189,31 +204,18 @@ class Editor:
             self.drawing.draw()
             self.console._print("Повтор", "success")
 
-    def clear_layer(self, layer_idx: int, ask_confirm: bool = True) -> None:
-        if ask_confirm:
-            self.console.ask_yes_no(f"Очистить слой {layer_idx+1}?", lambda ok: self._do_clear_layer(layer_idx, ok))
-        else:
-            self._do_clear_layer(layer_idx, True)
-
-    def _do_clear_layer(self, layer_idx: int, confirmed: bool) -> None:
-        if confirmed:
+    def clear_layer(self, layer_idx: int) -> None:
+        if 0 <= layer_idx < self.map.get_num_layers():
             self.save_state()
             self.map.clear_layer(layer_idx)
             self.drawing.draw()
             self.console._print(f"✓ Слой {layer_idx+1} очищен", "success")
 
-    def clear_all_layers(self, ask_confirm: bool = True) -> None:
-        if ask_confirm:
-            self.console.ask_yes_no("Очистить все слои?", self._do_clear_all_layers)
-        else:
-            self._do_clear_all_layers(True)
-
-    def _do_clear_all_layers(self, confirmed: bool) -> None:
-        if confirmed:
-            self.save_state()
-            self.map.clear_all()
-            self.drawing.draw()
-            self.console._print("✓ Все слои очищены", "success")
+    def clear_all_layers(self) -> None:
+        self.save_state()
+        self.map.clear_all()
+        self.drawing.draw()
+        self.console._print("✓ Все слои очищены", "success")
 
     def save_png(self) -> None:
         initial_dir = self.settings.get("last_export_path", "")
@@ -618,3 +620,75 @@ class Editor:
         self.settings.set("offset_x", self.camera.offset_x)
         self.settings.set("offset_y", self.camera.offset_y)
         self.root.destroy()
+
+    def copy_selection(self) -> None:
+        if not self.selection.active:
+            self.console._print("Нет выделенной области", "error")
+            return
+        x1, y1, x2, y2 = self.selection.get_rect()
+        layer = self.map.get_active_layer(self.selection.layer_idx)
+        data = layer.copy_rect(x1, y1, x2, y2)
+        self.clipboard = data
+        self.console._print("Выделение скопировано", "success")
+
+    def cut_selection(self) -> None:
+        if not self.selection.active:
+            self.console._print("Нет выделенной области", "error")
+            return
+        self.save_state()
+        x1, y1, x2, y2 = self.selection.get_rect()
+        layer = self.map.get_active_layer(self.selection.layer_idx)
+        data = layer.copy_rect(x1, y1, x2, y2)
+        self.clipboard = data
+        layer.fill_rect(x1, y1, x2, y2, EMPTY)
+        self.drawing.draw()
+        self.console._print("Выделение вырезано", "success")
+
+    def paste_selection(self) -> None:
+        if self.clipboard is None:
+            self.console._print("Буфер обмена пуст", "error")
+            return
+        x1, y1, x2, y2 = self.selection.get_rect() if self.selection.active else (0, 0, 0, 0)
+        if not self.selection.active:
+            x1, y1 = 0, 0
+        self.save_state()
+        layer = self.map.get_active_layer(self.layer_manager.current_layer)
+        layer.paste_rect(x1, y1, self.clipboard)
+        self.drawing.draw()
+        self.console._print("Вставка выполнена", "success")
+
+    def move_selection(self, dx: int, dy: int) -> None:
+        if not self.selection.active:
+            return
+        self.save_state()
+        x1, y1, x2, y2 = self.selection.get_rect()
+        layer = self.map.get_active_layer(self.selection.layer_idx)
+        layer.move_rect(x1, y1, x2, y2, dx, dy)
+        self.selection.set_rect(x1 + dx, y1 + dy, x2 + dx, y2 + dy, self.selection.layer_idx)
+        self.drawing.draw()
+        self.console._print(f"Перемещение на ({dx},{dy})", "success")
+
+    def replace_texture_all_layers(self, old: str, new: str) -> None:
+        if old != EMPTY and old not in self.tex.originals:
+            self.console._print(f"Текстура {old} не найдена", "error")
+            return
+        if new != EMPTY and new not in self.tex.originals:
+            self.console._print(f"Текстура {new} не найдена", "error")
+            return
+        self.save_state()
+        self.map.replace_texture_all_layers(old, new)
+        self.drawing.draw()
+        self.console._print(f"Замена {old} -> {new} выполнена", "success")
+
+    def set_brush_size(self, size: int) -> None:
+        if size < CFG.brush_min or size > CFG.brush_max:
+            self.console._print(f"Размер кисти должен быть от {CFG.brush_min} до {CFG.brush_max}", "error")
+            return
+        self.tool_manager.brush_size = size
+        self.ui.brush_size_label.config(text=str(size))
+        self.settings.set("brush_size", size)
+        self.update_status()
+        self.console._print(f"Размер кисти установлен на {size}", "success")
+
+    def enable_selection_tool(self) -> None:
+        self.tool_manager.set_tool(-3, False)
