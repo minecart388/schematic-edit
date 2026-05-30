@@ -22,6 +22,7 @@ class TexMgr:
         self.icons: Dict[str, ImageTk.PhotoImage] = {}
         self.originals: Dict[str, Image.Image] = {}
         self.name_to_index: Dict[str, int] = {}
+        self.index_to_name: Dict[int, str] = {}
         self._current_zoom: float = 1.0
         self._current_block_size: int = 0
 
@@ -31,6 +32,7 @@ class TexMgr:
         self.codes.clear()
         self.originals.clear()
         self.name_to_index.clear()
+        self.index_to_name.clear()
         if not os.path.isdir(folder):
             return
         files = [f for f in os.listdir(folder) if f.lower().endswith('.png')]
@@ -44,6 +46,7 @@ class TexMgr:
                 img = Image.open(p)
                 self.originals[name] = img.copy()
                 self.name_to_index[name] = idx + 1
+                self.index_to_name[idx + 1] = name
             except (IOError, OSError, Image.UnidentifiedImageError):
                 skipped.append(name)
         if log_func and skipped:
@@ -55,8 +58,7 @@ class TexMgr:
         if not os.path.isdir(folder):
             return
         icon_names = ["void.png", "find.png", "fill.png", "undo.png", "redo.png",
-                    "download.png", "upload.png", "clear.png", "copy.png", "cut.png",
-                    "paste.png", "invert.png", "border.png", "text.png"]
+                    "download.png", "upload.png", "clear.png", "circle.png", "rect.png", "line.png"]
         for name in icon_names:
             p = os.path.join(folder, name)
             if os.path.exists(p):
@@ -138,15 +140,14 @@ class Layer:
         self.h = len(self.grid)
         self.w = len(self.grid[0]) if self.h > 0 else 0
 
-        if tex_mgr and tex_mgr.name_to_index:
+        if tex_mgr and tex_mgr.index_to_name:
             for y in range(self.h):
                 for x in range(self.w):
                     val = self.grid[y][x]
                     if isinstance(val, int) and val != 0:
-                        for name, idx in tex_mgr.name_to_index.items():
-                            if idx == val:
-                                self.grid[y][x] = name
-                                break
+                        name = tex_mgr.index_to_name.get(val)
+                        if name:
+                            self.grid[y][x] = name
                         else:
                             self.grid[y][x] = EMPTY
                     elif val == 0:
@@ -158,7 +159,6 @@ class Layer:
     def resize(self, w: int, h: int, shift_x: int = 0, shift_y: int = 0) -> None:
         if self.h == h and self.w == w and shift_x == 0 and shift_y == 0:
             return
-
         new_grid = [[EMPTY] * w for _ in range(h)]
         for i in range(min(h, self.h)):
             for j in range(min(w, self.w)):
@@ -167,7 +167,6 @@ class Layer:
                 if 0 <= ni < h and 0 <= nj < w:
                     new_grid[ni][nj] = self.grid[i][j]
         self.grid = new_grid
-
         self.w = w
         self.h = h
 
@@ -205,22 +204,6 @@ class Layer:
             for x in range(left, right + 1):
                 self.grid[y][x] = tex_name
 
-    def fill_border(self, x1: int, y1: int, x2: int, y2: int, tex_name: str) -> None:
-        left = max(0, min(x1, x2))
-        right = min(self.w - 1, max(x1, x2))
-        top = max(0, min(y1, y2))
-        bottom = min(self.h - 1, max(y1, y2))
-        for x in range(left, right + 1):
-            if 0 <= top < self.h:
-                self.grid[top][x] = tex_name
-            if 0 <= bottom < self.h:
-                self.grid[bottom][x] = tex_name
-        for y in range(top + 1, bottom):
-            if 0 <= left < self.w:
-                self.grid[y][left] = tex_name
-            if 0 <= right < self.w:
-                self.grid[y][right] = tex_name
-
     def move_rect(self, x1: int, y1: int, x2: int, y2: int, dx: int, dy: int) -> None:
         data = self.copy_rect(x1, y1, x2, y2)
         left = max(0, min(x1, x2))
@@ -233,13 +216,15 @@ class Layer:
         self.paste_rect(x1 + dx, y1 + dy, data)
 
     def replace_texture(self, old_tex: str, new_tex: str) -> None:
+        if old_tex == EMPTY:
+            return
         for y in range(self.h):
             for x in range(self.w):
                 if self.grid[y][x] == old_tex:
                     self.grid[y][x] = new_tex
 
 class Map:
-    def __init__(self, w: int = CFG.map_width, h: int = CFG.map_height) -> None:
+    def __init__(self, w: int = 100, h: int = 50) -> None:
         self.w = w
         self.h = h
         self.layers: List[Layer] = [Layer(w, h)]
@@ -258,8 +243,8 @@ class Map:
         }
 
     def set(self, state: Dict[str, Any]) -> None:
-        self.w = state.get("w", CFG.map_width)
-        self.h = state.get("h", CFG.map_height)
+        self.w = state.get("w", 100)
+        self.h = state.get("h", 50)
         self.layers = []
         for layer_state in state["layers"]:
             layer = Layer(self.w, self.h)
@@ -305,17 +290,9 @@ class Map:
     def get_num_layers(self) -> int:
         return len(self.layers)
 
-    def copy_rect_all_layers(self, x1: int, y1: int, x2: int, y2: int) -> List[List[List[str]]]:
-        result = []
-        for layer in self.layers:
-            result.append(layer.copy_rect(x1, y1, x2, y2))
-        return result
-
-    def paste_rect_to_layer(self, layer_idx: int, x1: int, y1: int, data: List[List[str]]) -> None:
-        if 0 <= layer_idx < len(self.layers):
-            self.layers[layer_idx].paste_rect(x1, y1, data)
-
     def replace_texture_all_layers(self, old_tex: str, new_tex: str) -> None:
+        if old_tex == EMPTY:
+            return
         for layer in self.layers:
             layer.replace_texture(old_tex, new_tex)
 
@@ -335,7 +312,6 @@ class FileMgr:
     def load_json(self, path: str) -> bool:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-
         if "grid" in data:
             old_grid = data["grid"]
             old_h = len(old_grid)

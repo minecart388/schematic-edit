@@ -23,16 +23,7 @@ Multi-layer map editor with support for custom textures, a preset system, a comm
 1. Launch the application `Schematic-Edit` (or `main.py` from the source code).
 2. The editor window will open with an empty 100×50 map.
 
-### Toolbar (at the top)
-
-- **Eraser** – removes the texture
-- **Border** – draws/deletes borders between cells
-- **Pipette** – copies a texture from the map
-- **Fill** – fills an area with the selected texture
-- **Textures** – appear after loading, select a texture to draw
-- **Hotbar** – 9 slots for quick access to textures
-
-### console commands
+### Console commands
 
 - `help` – show help
 - `circle x y radius fill` – draw a circle
@@ -111,7 +102,6 @@ Multi-layer map editor with support for custom textures, a preset system, a comm
 - **OS:** Windows 7/8/10/11 (also works on Linux/macOS when run from source)
 - **Python:** 3.8+ (to run from source)
 - **RAM:** 256 MB (512 MB recommended for large maps)
-- **Screen:**** 1280×720 or more
 - **Dependencies:** Pillow (for image processing)
 
 ## License and distribution

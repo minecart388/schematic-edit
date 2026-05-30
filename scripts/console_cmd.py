@@ -75,7 +75,6 @@ class ConsoleCommands:
             self.console._print("Ошибка использования: circle x y radius fill [texture.png]", "error")
             self.console._print("Пример: circle 50 25 10 true stone.png", "info")
             return
-
         try:
             x = int(parts[1])
             y = int(parts[2])
@@ -88,24 +87,23 @@ class ConsoleCommands:
             if radius < 1:
                 self.console._print("Ошибка: радиус должен быть больше 0", "error")
                 return
-
             self.editor.save_state()
             self._draw_circle(x, y, radius, fill, tool)
-            self.editor.draw()
+            self.editor.drawing.full_redraw()
             self.console._print(f"✓ Круг нарисован: центр({x},{y}) радиус={radius} заливка={'да' if fill else 'нет'} текстура={tool}", "success")
         except ValueError:
             self.console._print("Ошибка: неверный формат чисел", "error")
     
     def _draw_circle(self, cx: int, cy: int, radius: int, fill: bool, tex_name: str) -> None:
         layer = self.editor.layer_manager.get_active_layer_obj()
-
+        w, h = self.editor.map.w, self.editor.map.h
         if fill:
             for y in range(-radius, radius + 1):
                 for x in range(-radius, radius + 1):
                     if x*x + y*y <= radius*radius:
                         nx = cx + x
                         ny = cy + y
-                        if 0 <= nx < CFG.map_width and 0 <= ny < CFG.map_height:
+                        if 0 <= nx < w and 0 <= ny < h:
                             layer.grid[ny][nx] = tex_name
         else:
             x = 0
@@ -126,7 +124,7 @@ class ConsoleCommands:
                     y -= 1
                 x += 1
             for px, py in points:
-                if 0 <= px < CFG.map_width and 0 <= py < CFG.map_height:
+                if 0 <= px < w and 0 <= py < h:
                     layer.grid[py][px] = tex_name
     
     def _cmd_rect(self, parts: list) -> None:
@@ -134,7 +132,6 @@ class ConsoleCommands:
             self.console._print("Ошибка использования: rect x1 y1 x2 y2 fill [texture.png]", "error")
             self.console._print("Пример: rect 10 10 90 40 true stone.png", "info")
             return
-
         try:
             x1 = int(parts[1])
             y1 = int(parts[2])
@@ -145,36 +142,33 @@ class ConsoleCommands:
             tool = self._get_current_texture_or_default(tex_name)
             if tool is None:
                 return
-
             self.editor.save_state()
             self._draw_rectangle(x1, y1, x2, y2, fill, tool)
-            self.editor.draw()
+            self.editor.drawing.full_redraw()
             self.console._print(f"✓ Прямоугольник нарисован: ({x1},{y1})-({x2},{y2}) заливка={'да' if fill else 'нет'} текстура={tool}", "success")
         except ValueError:
             self.console._print("Ошибка: неверный формат чисел", "error")
     
     def _draw_rectangle(self, x1: int, y1: int, x2: int, y2: int, fill: bool, tex_name: str) -> None:
         layer = self.editor.layer_manager.get_active_layer_obj()
-
         left = max(0, min(x1, x2))
-        right = min(CFG.map_width - 1, max(x1, x2))
+        right = min(self.editor.map.w - 1, max(x1, x2))
         top = max(0, min(y1, y2))
-        bottom = min(CFG.map_height - 1, max(y1, y2))
-
+        bottom = min(self.editor.map.h - 1, max(y1, y2))
         if fill:
             for y in range(top, bottom + 1):
                 for x in range(left, right + 1):
                     layer.grid[y][x] = tex_name
         else:
             for x in range(left, right + 1):
-                if 0 <= top < CFG.map_height:
+                if 0 <= top < self.editor.map.h:
                     layer.grid[top][x] = tex_name
-                if 0 <= bottom < CFG.map_height:
+                if 0 <= bottom < self.editor.map.h:
                     layer.grid[bottom][x] = tex_name
             for y in range(top + 1, bottom):
-                if 0 <= left < CFG.map_width:
+                if 0 <= left < self.editor.map.w:
                     layer.grid[y][left] = tex_name
-                if 0 <= right < CFG.map_width:
+                if 0 <= right < self.editor.map.w:
                     layer.grid[y][right] = tex_name
     
     def _cmd_line(self, parts: list) -> None:
@@ -182,7 +176,6 @@ class ConsoleCommands:
             self.console._print("Ошибка использования: line x1 y1 x2 y2 толщина [texture.png]", "error")
             self.console._print("Пример: line 10 10 90 40 3 stone.png", "info")
             return
-
         try:
             x1 = int(parts[1])
             y1 = int(parts[2])
@@ -196,10 +189,9 @@ class ConsoleCommands:
             if thickness < CFG.brush_min or thickness > CFG.brush_max:
                 self.console._print(f"Ошибка: толщина должна быть от {CFG.brush_min} до {CFG.brush_max}", "error")
                 return
-
             self.editor.save_state()
             self._draw_line(x1, y1, x2, y2, thickness, tool)
-            self.editor.draw()
+            self.editor.drawing.full_redraw()
             self.console._print(f"✓ Линия нарисована: ({x1},{y1})→({x2},{y2}) толщина={thickness} текстура={tool}", "success")
         except ValueError:
             self.console._print("Ошибка: неверный формат чисел", "error")
@@ -207,13 +199,13 @@ class ConsoleCommands:
     def _draw_line(self, x1: int, y1: int, x2: int, y2: int, thickness: int, tex_name: str) -> None:
         layer = self.editor.layer_manager.get_active_layer_obj()
         points = self._get_line_points(x1, y1, x2, y2)
-
+        w, h = self.editor.map.w, self.editor.map.h
         for px, py in points:
             for dy in range(-(thickness // 2), (thickness + 1) // 2):
                 for dx in range(-(thickness // 2), (thickness + 1) // 2):
                     nx = px + dx
                     ny = py + dy
-                    if 0 <= nx < CFG.map_width and 0 <= ny < CFG.map_height:
+                    if 0 <= nx < w and 0 <= ny < h:
                         layer.grid[ny][nx] = tex_name
     
     def _get_line_points(self, x1: int, y1: int, x2: int, y2: int) -> List[Tuple[int, int]]:
@@ -224,7 +216,6 @@ class ConsoleCommands:
         sy = 1 if y1 < y2 else -1
         err = dx - dy
         x, y = x1, y1
-
         while True:
             points.append((x, y))
             if x == x2 and y == y2:
@@ -253,14 +244,12 @@ class ConsoleCommands:
             self.console._print("Ошибка использования: layer <номер> [show|del]", "error")
             self.console._print("Примеры: layer 2, layer 2 show, layer 2 del", "info")
             return
-
         try:
             idx = int(parts[1]) - 1
             if idx < 0 or idx >= self.editor.map.get_num_layers():
                 self.console._print(f"Ошибка: слой {idx + 1} не существует", "error")
                 self.console._print(f"Всего слоёв: {self.editor.map.get_num_layers()}", "info")
                 return
-
             if len(parts) == 2:
                 self.editor.layer_manager.set_active_layer(idx)
                 self.console._print(f"✓ Переключились на слой {idx + 1}", "success")
@@ -269,7 +258,7 @@ class ConsoleCommands:
                 if subcmd == "show":
                     self.editor.map.visible[idx] = not self.editor.map.visible[idx]
                     self.editor.ui.update_visibility_check()
-                    self.editor.drawing.draw()
+                    self.editor.drawing.full_redraw()
                     status = "показан" if self.editor.map.visible[idx] else "скрыт"
                     self.console._print(f"Слой {idx+1} {status}", "success")
                 elif subcmd == "del":
@@ -282,7 +271,7 @@ class ConsoleCommands:
                         self.editor.layer_manager.current_layer = self.editor.map.get_num_layers() - 1
                     self.editor.layer_manager.set_active_layer(self.editor.layer_manager.current_layer)
                     self.editor.ui.update_layer_ui()
-                    self.editor.drawing.draw()
+                    self.editor.drawing.full_redraw()
                     self.console._print(f"✓ Слой {idx + 1} удалён", "success")
                 else:
                     self.console._print(f"Ошибка: неизвестная подкоманда '{subcmd}'", "error")

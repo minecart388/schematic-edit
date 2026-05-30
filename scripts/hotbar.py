@@ -83,6 +83,12 @@ class HotbarManager:
                 return i
         return None
 
+    def find_slot_by_texture(self, texture_name: str) -> Optional[int]:
+        for i, slot in enumerate(self.slots):
+            if not slot.is_empty and slot.texture_name == texture_name:
+                return i
+        return None
+
 class HotbarWidget:
     def __init__(self, parent, tex_mgr: TexMgr, hotbar_mgr: HotbarManager,
                  on_select_callback):
@@ -101,15 +107,12 @@ class HotbarWidget:
     def _build(self):
         self.container = tk.Frame(self.parent, bg=CFG.colors["BG_PANEL"])
         self.container.pack(side=tk.LEFT, padx=10)
-
         self.title_label = tk.Label(self.container, text="Хотбар",
                                     bg=CFG.colors["BG_PANEL"], fg=CFG.colors["TEXT"],
                                     font=("Arial", 9, "bold"))
         self.title_label.pack(side=tk.LEFT, padx=5)
-
         self.slots_frame = tk.Frame(self.container, bg=CFG.colors["SLOT_BORDER"], bd=1, relief=tk.SUNKEN)
         self.slots_frame.pack(side=tk.LEFT, padx=5, pady=2)
-
         for i in range(9):
             slot = self._create_slot(self.slots_frame, i)
             slot.pack(side=tk.LEFT, padx=1, pady=1)
@@ -120,15 +123,12 @@ class HotbarWidget:
         frame = tk.Frame(parent, bg=colors["SLOT_BORDER"], bd=1, relief=tk.RAISED,
                          width=36, height=36)
         frame.pack_propagate(False)
-
         btn = tk.Button(frame, width=4, height=2, bg=colors["BUTTON"],
                        fg=colors["TEXT"], relief=tk.FLAT,
                        command=lambda i=idx: self._on_click(i))
         btn.pack(fill=tk.BOTH, expand=True)
-
         btn.bind("<ButtonPress-1>", lambda e, i=idx: self._on_press(i, e))
         btn.bind("<ButtonRelease-1>", lambda e, i=idx: self._on_release(i, e))
-
         frame.btn = btn
         frame.index = idx
         self.buttons.append(btn)
@@ -192,7 +192,15 @@ class HotbarWidget:
         self.selected_index = idx
         self.slots[idx].config(bg="#4CAF50")
 
+    def select_slot_by_texture(self, texture_name: str) -> bool:
+        idx = self.hotbar_mgr.find_slot_by_texture(texture_name)
+        if idx is not None:
+            self.select_slot(idx)
+            return True
+        return False
+
     def refresh(self):
+        self._cached_thumb_photos.clear()
         for i in range(9):
             self._update_slot(i)
         if self.selected_index is not None:
@@ -222,7 +230,6 @@ class HotbarConfigWindow:
         self.tex_mgr = tex_mgr
         self.hotbar_mgr = hotbar_mgr
         self.hotbar_widget = hotbar_widget
-
         self.window = tk.Toplevel(parent)
         self.window.title("Управление хотбаром")
         self.window.geometry("900x550")
@@ -230,7 +237,6 @@ class HotbarConfigWindow:
         self.window.transient(parent)
         self.window.grab_set()
         self.window.configure(bg=CFG.colors["BG_PANEL"])
-
         self._build()
         self._apply_theme()
 
@@ -268,53 +274,40 @@ class HotbarConfigWindow:
 
     def _build(self):
         colors = CFG.colors
-
         main_frame = tk.Frame(self.window, bg=colors["BG_PANEL"])
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
         tk.Label(main_frame, text="Управление слотами хотбара", font=("Arial", 12, "bold"),
                 bg=colors["BG_PANEL"], fg=colors["TEXT"]).pack(pady=5)
-
         self.slots_container = tk.Frame(main_frame, bg=colors["BG_PANEL"])
         self.slots_container.pack(fill=tk.X, pady=10)
-
         self.slot_frames = []
         for i in range(9):
             col_frame = tk.Frame(self.slots_container, bg=colors["BG_PANEL"], bd=1, relief=tk.RAISED)
             col_frame.grid(row=0, column=i, padx=4, pady=4, sticky="nsew")
-
             icon_frame = tk.Frame(col_frame, bg=colors["BG_PANEL"], bd=1, relief=tk.SUNKEN,
                                   width=64, height=64)
             icon_frame.pack(pady=5, padx=5)
             icon_frame.pack_propagate(False)
-
             icon_label = tk.Label(icon_frame, bg=colors["BG_PANEL"])
             icon_label.pack(fill=tk.BOTH, expand=True)
-
             clear_btn = tk.Button(col_frame, text="Очистить", width=10,
                                  command=lambda idx=i: self._clear_slot(idx),
                                  bg=colors["BUTTON"], fg=colors["TEXT"])
             clear_btn.pack(pady=2)
-
             self.slot_frames.append({
                 "frame": col_frame,
                 "icon_label": icon_label,
                 "clear_btn": clear_btn
             })
-
         for i in range(9):
             self.slots_container.grid_columnconfigure(i, weight=1)
-
         btn_clear_all = tk.Button(main_frame, text="Очистить все слоты", command=self._clear_all_slots,
                                  bg=colors["BUTTON"], fg=colors["TEXT"])
         btn_clear_all.pack(pady=5)
-
         self._update_slots_display()
-
         texture_frame = tk.LabelFrame(main_frame, text="Доступные текстуры", font=("Arial", 10, "bold"),
                                       bg=colors["BG_PANEL"], fg=colors["TEXT"])
         texture_frame.pack(fill=tk.BOTH, expand=True, pady=10)
-
         search_frame = tk.Frame(texture_frame, bg=colors["BG_PANEL"])
         search_frame.pack(fill=tk.X, pady=5)
         tk.Label(search_frame, text="Поиск:", bg=colors["BG_PANEL"],
@@ -325,23 +318,17 @@ class HotbarConfigWindow:
         search_entry.pack(side=tk.LEFT, padx=5)
         tk.Button(search_frame, text="Сброс", command=lambda: self.search_var.set(""),
                  bg=colors["BUTTON"], fg=colors["TEXT"]).pack(side=tk.LEFT, padx=5)
-
         canvas_frame = tk.Frame(texture_frame, bg=colors["BG_PANEL"])
         canvas_frame.pack(fill=tk.BOTH, expand=True)
-
         self.textures_canvas = tk.Canvas(canvas_frame, bg=colors["BG_CANVAS"], highlightthickness=0)
         self.textures_container = tk.Frame(self.textures_canvas, bg=colors["BG_CANVAS"])
         self.textures_container.bind("<Configure>", self._on_container_configure)
         self.textures_canvas.create_window((0,0), window=self.textures_container, anchor="nw")
         self.textures_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
         self._populate_textures()
-
         self._bind_scroll_to_widget(self.textures_canvas)
         self._bind_all_children(self.textures_container)
-
         self.search_var.trace('w', lambda *_: self._filter_textures())
-
         btn_close = tk.Button(main_frame, text="Закрыть", command=self.window.destroy,
                              bg=colors["BUTTON"], fg=colors["TEXT"], width=10)
         btn_close.pack(pady=5)
@@ -385,18 +372,15 @@ class HotbarConfigWindow:
     def _populate_textures(self):
         for widget in self.textures_container.winfo_children():
             widget.destroy()
-
         textures = sorted(self.tex_mgr.blocks.keys())
         if not textures:
             lbl = tk.Label(self.textures_container,
                           bg=CFG.colors["BG_CANVAS"], fg=CFG.colors["TEXT"])
             lbl.pack(pady=20)
             return
-
         max_cols = 8
         row = col = 0
         self.texture_widgets = []
-
         for tex_name in textures:
             frame = tk.Frame(self.textures_container, bg=CFG.colors["BG_CANVAS"])
             frame.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
@@ -414,10 +398,8 @@ class HotbarConfigWindow:
             if col >= max_cols:
                 col = 0
                 row += 1
-
         for i in range(max_cols):
             self.textures_container.grid_columnconfigure(i, weight=1)
-
         self._bind_all_children(self.textures_container)
 
     def _filter_textures(self):

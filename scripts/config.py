@@ -9,8 +9,6 @@ from tkinter import ttk
 @dataclass
 class Config:
     cell_size: int = 16
-    map_width: int = 100
-    map_height: int = 50
     max_layers: int = 383
     undo_limit: int = 30
     brush_min: int = 1
@@ -56,13 +54,8 @@ class Config:
         if theme in ("dark", "light"):
             self._current_theme = theme
 
-    @property
-    def width_px(self) -> int:
-        return self.map_width * self.cell_size
-
-    @property
-    def height_px(self) -> int:
-        return self.map_height * self.cell_size
+CFG = Config()
+EMPTY = ""
 
 class ProgressDialog:
     def __init__(self, parent, title: str = "Прогресс", max_value: int = 100):
@@ -77,7 +70,6 @@ class ProgressDialog:
         
         self.dialog.protocol("WM_DELETE_WINDOW", self._on_close)
         self._cancelled = False
-        self._callback = None
         
         main_frame = tk.Frame(self.dialog, bg=colors["BG_PANEL"])
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -102,8 +94,6 @@ class ProgressDialog:
     
     def _on_close(self):
         self._cancelled = True
-        if self._callback:
-            self._callback(False)
         self.dialog.destroy()
     
     def _cancel(self):
@@ -120,9 +110,6 @@ class ProgressDialog:
     
     def is_cancelled(self) -> bool:
         return self._cancelled
-    
-    def set_callback(self, callback):
-        self._callback = callback
     
     def close(self):
         self.dialog.destroy()
@@ -188,7 +175,3 @@ class Settings:
 
     def set_theme(self, theme: str) -> None:
         self.set("theme", theme)
-
-
-CFG = Config()
-EMPTY = ""
